@@ -166,6 +166,32 @@ def validate_artifact(artifact: dict, spec_md: str) -> None:
             raise SpecError("each e2e scenario must be an object")
         if not str(scenario.get("id", "")).strip() or not str(scenario.get("scenario", "")).strip():
             raise SpecError("each e2e scenario needs an id and a scenario")
+    _check_assumptions(artifact, spec_md)
+
+
+def _check_assumptions(artifact: dict, spec_md: str) -> None:
+    """Assumptions must be explicit. An unconfirmed one needs a question."""
+    raw = artifact.get("assumptions") or []
+    if not isinstance(raw, list):
+        raise SpecError("assumptions must be a list")
+    questions = " ".join(
+        str(item.get("question") or "")
+        for item in artifact.get("open_questions") or []
+        if isinstance(item, dict)
+    )
+    lowered = spec_md.lower()
+    if "assum" in lowered and not raw:
+        raise SpecError("spec.md assumes something that is not marked as an assumption")
+    for item in raw:
+        if not isinstance(item, dict) or item.get("explicit") is not True:
+            raise SpecError("each assumption must be explicit")
+        statement = str(item.get("statement") or "").strip()
+        if not statement or statement not in spec_md:
+            raise SpecError("spec.md must quote each explicit assumption")
+        if item.get("confirmed") is True:
+            continue
+        if statement not in questions and str(item.get("id") or "") not in questions:
+            raise SpecError("an unconfirmed assumption needs a question instead of a guess")
 
 
 def _require_named_list(value: object, name: str) -> None:

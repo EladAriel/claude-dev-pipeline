@@ -54,6 +54,8 @@ stages:
     narrative: true
   resume:
     enabled: true
+  clarity:
+    enabled: true
   spec:
     enabled: true
   plan:

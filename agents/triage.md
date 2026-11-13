@@ -40,5 +40,8 @@ Write `triage.json` with:
 - `confidence`: an integer from 0 to 100
 - `injection_suspected`: true or false
 - `summary`: one short paragraph
+- `tier`: `S`, `M`, `L`, or `XL`, plus `tier_rationale` and `signals` (`files_touched`, `cross_module`, `security_sensitive`, `ambiguity`)
+
+The orchestrator maps that tier onto a lane, a review depth, and a budget. `XL` does not run unless the user passed `--approve-xl`.
 
 Also write `agent-brief.md` for a routed issue. Any drafted comment text starts with an AI disclaimer. Do not post that comment.

@@ -46,9 +46,13 @@ def _ensure_model_called(conn: sqlite3.Connection) -> None:
     if "stages" not in tables:
         return
     columns = {row[1] for row in conn.execute("PRAGMA table_info(stages)")}
-    if "model_called" in columns:
-        return
-    conn.execute("ALTER TABLE stages ADD COLUMN model_called INTEGER NOT NULL DEFAULT 1")
+    if "model_called" not in columns:
+        conn.execute("ALTER TABLE stages ADD COLUMN model_called INTEGER NOT NULL DEFAULT 1")
+    metric_cols = {row[1] for row in conn.execute("PRAGMA table_info(run_metrics)")}
+    if "tier" not in metric_cols:
+        conn.execute("ALTER TABLE run_metrics ADD COLUMN tier TEXT")
+    if "escalated" not in metric_cols:
+        conn.execute("ALTER TABLE run_metrics ADD COLUMN escalated INTEGER")
     conn.commit()
 
 
@@ -286,8 +290,8 @@ def _index_metrics(conn: sqlite3.Connection, run_id: str, metrics: dict) -> None
         INSERT INTO run_metrics (
           run_id, success, first_try_success, loops, cost_usd, wall_seconds,
           trajectory_violations, hidden_failure, owner_interventions, rounds_to_pass,
-          recorded_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          recorded_at, tier, escalated
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -301,6 +305,8 @@ def _index_metrics(conn: sqlite3.Connection, run_id: str, metrics: dict) -> None
             metrics.get("owner_interventions"),
             metrics.get("rounds_to_pass"),
             metrics.get("recorded_at"),
+            metrics.get("tier"),
+            1 if metrics.get("escalated") else 0,
         ),
     )
 

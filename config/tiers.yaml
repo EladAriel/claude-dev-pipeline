@@ -1,0 +1,52 @@
+# Difficulty tiers. Caps stay inside the $20 run cap. Overrides must be on
+# each stage's allowlist; anything else is ignored.
+enabled: true
+order: [S, M, L, XL]
+signal_floors:
+  security_sensitive: L
+  cross_module: M
+  ambiguity_high: L
+  files_touched:
+    M: 3
+    L: 8
+    XL: 20
+tiers:
+  S:
+    lane: fast
+    review_depth: Quick
+    risk_tier: Quick
+    codex: off
+    budget_cents: 400
+    requires_approval: false
+    models:
+      implement: {model: claude-sonnet-5.5, effort: high}
+      verify: {model: claude-haiku-5.5, effort: low}
+  M:
+    lane: standard
+    review_depth: Standard
+    risk_tier: Standard
+    codex: on
+    budget_cents: 1200
+    requires_approval: false
+    models:
+      implement: {model: claude-sonnet-5.5, effort: high}
+  L:
+    lane: full
+    review_depth: Deep
+    risk_tier: Deep
+    codex: on
+    budget_cents: 1800
+    requires_approval: false
+    models:
+      implement: {model: claude-opus-5.5, effort: high}
+      finder-bugs: {model: claude-opus-5.5, effort: high}
+  XL:
+    lane: full
+    review_depth: Deep
+    risk_tier: Deep
+    codex: on
+    budget_cents: 2000
+    requires_approval: true
+    models:
+      implement: {model: claude-opus-5.5, effort: high}
+      finder-bugs: {model: claude-opus-5.5, effort: high}

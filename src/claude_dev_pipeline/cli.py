@@ -53,6 +53,7 @@ from claude_dev_pipeline.stages.review import ReviewError, ReviewSkipped, execut
 from claude_dev_pipeline.stages.spec import SpecError, SpecSkipped, execute_spec
 from claude_dev_pipeline.stages.triage import TriageError, execute_triage
 from claude_dev_pipeline.stages.verify import VerifyError, execute_verify
+from claude_dev_pipeline.tiers import TierApprovalRequired, apply_routing_models, load_tiers
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -140,6 +141,12 @@ def _parser() -> argparse.ArgumentParser:
         help="recorded retro proposals; never applied and never a live API call",
     )
     run.add_argument("--target-repo", type=Path)
+    run.add_argument("--tiers", type=Path)
+    run.add_argument(
+        "--approve-xl",
+        action="store_true",
+        help="allow a tier XL run; without this flag XL stops before any later stage",
+    )
 
     report = sub.add_parser("report", help="aggregate inline metrics from the local index")
     report.add_argument("--db", type=Path)
@@ -282,6 +289,7 @@ def _run(args: argparse.Namespace) -> int:
                 )
             )
             try:
+                tiers = _tiers(args, pipeline)
                 result = execute_triage(
                     snapshot=snapshot,
                     fixture_path=args.model_fixture,
@@ -290,7 +298,13 @@ def _run(args: argparse.Namespace) -> int:
                     spent_cents=0,
                     run_cap_cents=work_cap,
                     stage_cap_cents=caps["triage"],
+                    tiers=tiers,
+                    models=models,
+                    approve_xl=bool(getattr(args, "approve_xl", False)),
                 )
+            except TierApprovalRequired as exc:
+                print(str(exc), file=sys.stderr)
+                return _finish(2, "tier-xl")
             except BudgetHardStop as exc:
                 print(str(exc), file=sys.stderr)
                 return _finish(1, "budget-halt")
@@ -305,6 +319,13 @@ def _run(args: argparse.Namespace) -> int:
             print(f"triage: {result.decision}")
             print(f"risk-tier: {result.risk_tier}")
             print(f"triage-cost: {format_usd(result.amount_cents)}")
+            routing = _saved_routing(run_dir)
+            if routing:
+                budget = int(routing.get("budget_cents") or 0)
+                if budget > 0:
+                    work_cap = min(work_cap, budget)
+                models = apply_routing_models(models, routing)
+                print(f"tier: {routing.get('tier')} lane={routing.get('lane')}")
             spec_status = _run_spec(
                 args,
                 run_dir=run_dir,
@@ -406,6 +427,25 @@ def _run(args: argparse.Namespace) -> int:
                         elif pr_status == "draft":
                             mode = "pr-draft"
     return _finish(exit_code, stop_reason)
+
+
+def _tiers(args: argparse.Namespace, pipeline: dict) -> dict | None:
+    if not stage_enabled(pipeline, "tiers"):
+        return None
+    path = getattr(args, "tiers", None) or Path("config/tiers.yaml")
+    loaded = load_tiers(path)
+    if not loaded.get("enabled", True):
+        return None
+    return loaded
+
+
+def _saved_routing(run_dir: Path) -> dict:
+    path = run_dir / "triage.json"
+    if not path.is_file():
+        return {}
+    triage = json.loads(path.read_text(encoding="utf-8"))
+    routing = triage.get("routing")
+    return routing if isinstance(routing, dict) else {}
 
 
 def _run_retro(
@@ -674,7 +714,9 @@ def _run_review(
     triage_path = run_dir / "triage.json"
     tier = "Standard"
     if triage_path.is_file():
-        tier = str(json.loads(triage_path.read_text(encoding="utf-8")).get("risk_tier") or tier)
+        triage = json.loads(triage_path.read_text(encoding="utf-8"))
+        routing = triage.get("routing") if isinstance(triage.get("routing"), dict) else {}
+        tier = str(routing.get("review_depth") or triage.get("risk_tier") or tier)
     codex_cfg = (pipeline.get("reviewers") or {}).get("codex") or {}
     quick = str((pipeline.get("review") or {}).get("quick_finder_model") or "claude-sonnet-5.5")
     finder = str((models.get("finder-bugs") or {}).get("model") or "claude-opus-5.5")

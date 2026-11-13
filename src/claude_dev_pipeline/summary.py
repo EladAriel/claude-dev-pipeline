@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from claude_dev_pipeline.clarity import summary_lines
+from claude_dev_pipeline.conflicts import summary_lines as conflict_lines
 from claude_dev_pipeline.flaky import risk_line
 from claude_dev_pipeline.github_gate import admit_issue
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
@@ -65,6 +66,7 @@ def write_summary(
     if diagnosis.is_file():
         lines.extend(["", "## Diagnosis", "See `diagnosis.md` in this run."])
     lines.extend(summary_lines(run_dir))
+    lines.extend(conflict_lines(run_dir))
     text = "\n".join(lines) + "\n"
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "summary.md").write_text(text, encoding="utf-8")

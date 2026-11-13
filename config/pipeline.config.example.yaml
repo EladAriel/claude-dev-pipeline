@@ -80,6 +80,13 @@ stages:
     max_cents: 5
   pr:
     enabled: true
+  conflicts:
+    enabled: true
+    max_cents: 25
+    trivial:
+      - "*lock*"
+      - "*.generated.*"
+      - "*generated*"
   retro:
     enabled: true
 models:

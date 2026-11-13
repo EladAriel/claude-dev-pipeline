@@ -29,6 +29,7 @@ from claude_dev_pipeline.config import (
     run_cap_cents,
     stage_enabled,
 )
+from claude_dev_pipeline.conflicts import needs_retry, settle
 from claude_dev_pipeline.db import (
     aggregate_report,
     init_db,
@@ -714,12 +715,53 @@ def _run(args: argparse.Namespace) -> int:
                         triage_status = "succeeded"
                         if "review" not in completed and _note("review"):
                             return 3
-                        if (run_dir / "pr.json").is_file():
+                        pending = (
+                            stage_enabled(pipeline, "conflicts")
+                            and getattr(args, "target_repo", None) is not None
+                            and needs_retry(args.target_repo, run_dir, run_id, "main")
+                        )
+                        if (run_dir / "pr.json").is_file() and not pending:
                             print("resume: pull request already recorded")
                             pr_status = "rendered"
                         else:
                             if _gate("pr", None) == "halt":
                                 return _finish(1, "budget-halt")
+                            reuse = False
+                            if pending or (
+                                stage_enabled(pipeline, "conflicts")
+                                and getattr(args, "target_repo", None) is not None
+                            ):
+                                outcome = _settle_conflicts(
+                                    args,
+                                    pipeline,
+                                    run_dir,
+                                    run_id,
+                                    work_cap,
+                                    lambda: _run_verify(
+                                        args,
+                                        run_dir=run_dir,
+                                        run_id=run_id,
+                                        pipeline=pipeline,
+                                        caps=caps,
+                                        cap=work_cap,
+                                        effort=str(
+                                            (models.get("verify") or {}).get("effort") or "low"
+                                        ),
+                                    ),
+                                    lambda: _run_review(
+                                        args,
+                                        run_dir=run_dir,
+                                        run_id=run_id,
+                                        models=models,
+                                        pipeline=pipeline,
+                                        caps=caps,
+                                        cap=work_cap,
+                                    ),
+                                )
+                                if outcome["status"] == "stopped":
+                                    print("pr: conflicts remain")
+                                    return _finish(1, "conflict")
+                                reuse = outcome.get("action") == "resolved"
                             pr_status = _run_pr(
                                 args,
                                 run_dir=run_dir,
@@ -728,6 +770,7 @@ def _run(args: argparse.Namespace) -> int:
                                 pipeline=pipeline,
                                 caps=caps,
                                 cap=work_cap,
+                                reuse_branch=reuse,
                             )
                         if pr_status == "blocked":
                             mode = "pr-blocked"
@@ -1305,6 +1348,8 @@ def _run_review(
             verify = json.loads(verify_path.read_text(encoding="utf-8"))
             if verify.get("status") == "unverified":
                 tier = raise_depth(tier)
+    if (run_dir / "conflict-review.json").is_file():
+        tier = "Quick"
     codex_cfg = (pipeline.get("reviewers") or {}).get("codex") or {}
     quick = str((pipeline.get("review") or {}).get("quick_finder_model") or "claude-sonnet-5.5")
     finder = str((models.get("finder-bugs") or {}).get("model") or "claude-opus-5.5")
@@ -1346,6 +1391,29 @@ def _run_review(
     return "succeeded"
 
 
+def _settle_conflicts(args, pipeline, run_dir, run_id, cap, verify, review) -> dict:
+    labels: list[str] = []
+    timeline: list[dict] = []
+    snapshot = getattr(args, "issue_snapshot", None)
+    if snapshot is not None and Path(snapshot).is_file():
+        data = json.loads(Path(snapshot).read_text(encoding="utf-8"))
+        labels = [str(item) for item in data.get("labels") or []]
+        timeline = list(data.get("timeline") or [])
+    return settle(
+        repo=args.target_repo,
+        run_id=run_id,
+        base="main",
+        run_dir=run_dir,
+        config=pipeline,
+        verify=verify,
+        review=review,
+        labels=labels,
+        timeline=timeline,
+        spent_cents=_spent_cents(run_dir),
+        run_cap_cents=cap,
+    )
+
+
 def _run_pr(
     args: argparse.Namespace,
     *,
@@ -1355,6 +1423,7 @@ def _run_pr(
     pipeline: dict,
     caps: dict[str, int],
     cap: int,
+    reuse_branch: bool = False,
 ) -> str | None:
     if not stage_enabled(pipeline, "pr"):
         print("pr: disabled by stages.pr.enabled")
@@ -1386,6 +1455,7 @@ def _run_pr(
             model=model,
             effort=effort,
             issue_number=issue_number,
+            reuse_branch=reuse_branch,
         )
     except PrSkipped as exc:
         print(f"pr: skipped ({exc})")

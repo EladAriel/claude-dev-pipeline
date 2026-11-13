@@ -124,6 +124,7 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
         "verify_pass": verify_pass,
         "verification": verify.get("verification") or verify.get("status") or "",
         "flaky_tests": len(verify.get("flaky") or []),
+        "docs_lane": bool(_read(run_dir / "docs.json").get("lane") == "docs"),
         "stop_reason": stop_reason,
         "halt_reason": halt.get("halt_reason") or "",
         "needed_cents": int(halt.get("needed_cents") or 0),

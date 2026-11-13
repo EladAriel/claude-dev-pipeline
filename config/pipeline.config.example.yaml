@@ -33,6 +33,8 @@ budgets_usd:
 stages:
   triage:
     enabled: true
+  tiers:
+    enabled: true
   spec:
     enabled: true
   plan:

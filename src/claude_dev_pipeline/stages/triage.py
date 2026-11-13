@@ -9,6 +9,7 @@ from pathlib import Path
 from claude_dev_pipeline.budget import BudgetHardStop, authorize_session_cents
 from claude_dev_pipeline.github_gate import GITHUB_APPROVED_LABEL, admit_issue
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
+from claude_dev_pipeline.tiers import TierApprovalRequired, assign_tier
 
 CLASSIFY = {"bug", "enhancement"}
 STATES = {"needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"}
@@ -92,6 +93,9 @@ def execute_triage(
     spent_cents: int,
     run_cap_cents: int,
     stage_cap_cents: int,
+    tiers: dict | None = None,
+    models: dict | None = None,
+    approve_xl: bool = False,
 ) -> TriageResult:
     """Validate a recorded model response and book it only after the issue gate.
 
@@ -115,6 +119,10 @@ def execute_triage(
     if not isinstance(artifact, dict):
         raise TriageError("fixture artifact must be an object")
     validate_artifact(artifact)
+    if tiers and tiers.get("enabled", True):
+        artifact = assign_tier(artifact, tiers, models or {})
+        if artifact["routing"]["requires_approval"] and not approve_xl:
+            raise TierApprovalRequired
     usage = fixture.get("usage") or {}
     if not isinstance(usage, dict):
         raise TriageError("fixture usage must be an object")

@@ -127,5 +127,7 @@ CREATE TABLE run_metrics (
   hidden_failure INTEGER,
   owner_interventions INTEGER,
   rounds_to_pass INTEGER,
-  recorded_at TEXT
+  recorded_at TEXT,
+  tier TEXT,
+  escalated INTEGER
 );

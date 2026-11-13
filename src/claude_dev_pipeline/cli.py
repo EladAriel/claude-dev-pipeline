@@ -34,6 +34,7 @@ from claude_dev_pipeline.issues import (
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 from claude_dev_pipeline.plan import STAGES, Stage, require_gates
 from claude_dev_pipeline.scan import load_allowlist, scan_tree
+from claude_dev_pipeline.stages.spec import SpecError, SpecSkipped, execute_spec
 from claude_dev_pipeline.stages.triage import TriageError, execute_triage
 
 
@@ -83,6 +84,11 @@ def _parser() -> argparse.ArgumentParser:
         "--model-fixture",
         type=Path,
         help="recorded triage response; required to run triage, and never a live API call",
+    )
+    run.add_argument(
+        "--spec-fixture",
+        type=Path,
+        help="recorded spec response; used only after triage routes, and never a live API call",
     )
 
     status = sub.add_parser("status", help="print the latest local run")
@@ -151,6 +157,7 @@ def _run(args: argparse.Namespace) -> int:
     triage_status = "dry-run"
     risk_tier = None
     mode = "dry-run"
+    spent_cents = 0
     if args.model_fixture is not None and not args.dry_run:
         if intake.kind != "issue":
             print(
@@ -185,9 +192,25 @@ def _run(args: argparse.Namespace) -> int:
                 return exc.code
             triage_status = result.status
             risk_tier = result.risk_tier
+            spent_cents = result.amount_cents
             print(f"triage: {result.decision}")
             print(f"risk-tier: {result.risk_tier}")
             print(f"triage-cost: {format_usd(result.amount_cents)}")
+            spec_status = _run_spec(
+                args,
+                run_dir=run_dir,
+                run_id=run_id,
+                models=models,
+                pipeline=pipeline,
+                caps=caps,
+                cap=cap,
+                spent_cents=spent_cents,
+            )
+            if spec_status == "failed":
+                return 1
+            if spec_status == "succeeded":
+                mode = "spec-fixture"
+                triage_status = "succeeded"
     print("claude-dev-pipeline scaffold")
     print(f"mode: {mode}")
     print("api-calls: none")
@@ -219,6 +242,62 @@ def _run(args: argparse.Namespace) -> int:
     write_run_artifact(runs_dir, db_path, payload)
     print(f"recorded: {db_path}")
     return 0
+
+
+def _run_spec(
+    args: argparse.Namespace,
+    *,
+    run_dir: Path,
+    run_id: str,
+    models: dict,
+    pipeline: dict,
+    caps: dict[str, int],
+    cap: int,
+    spent_cents: int,
+) -> str | None:
+    if args.spec_fixture is None:
+        return None
+    if not stage_enabled(pipeline, "spec"):
+        print("spec: disabled by stages.spec.enabled")
+        return "skipped"
+    triage_path = run_dir / "triage.json"
+    if not triage_path.is_file():
+        print("spec: skipped (triage did not route)")
+        return "skipped"
+    triage = json.loads(triage_path.read_text(encoding="utf-8"))
+    if triage.get("decision") != "route":
+        print("spec: skipped (triage rejected)")
+        return "skipped"
+    spec_stage = next(stage for stage in STAGES if stage.key == "spec")
+    model = effective_model(spec_stage, models, pipeline)
+    brief = (run_dir / "agent-brief.md").read_text(encoding="utf-8")
+    try:
+        result = execute_spec(
+            triage=triage,
+            brief=brief,
+            fixture_path=args.spec_fixture,
+            run_dir=run_dir,
+            run_id=run_id,
+            spent_cents=spent_cents,
+            run_cap_cents=cap,
+            stage_cap_cents=caps["spec"],
+            mcp_config=pipeline,
+            model=model["model"],
+            effort=model["effort"],
+        )
+    except SpecSkipped as exc:
+        print(f"spec: skipped ({exc})")
+        return "skipped"
+    except BudgetHardStop as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    except SpecError as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    print(f"spec: needs_human={str(result.needs_human).lower()}")
+    print(f"spec-cost: {format_usd(result.amount_cents)}")
+    print("mcp-contacted: none")
+    return "succeeded"
 
 
 def _status(args: argparse.Namespace) -> int:

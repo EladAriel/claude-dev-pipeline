@@ -56,6 +56,10 @@ stages:
     enabled: true
   clarity:
     enabled: true
+  duplicates:
+    enabled: true
+    threshold: 0.55
+    borderline: 0.35
   verification:
     enabled: true
     mode: bootstrap

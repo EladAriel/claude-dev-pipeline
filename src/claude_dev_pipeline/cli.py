@@ -37,6 +37,14 @@ from claude_dev_pipeline.db import (
     rebuild_db,
     write_run_artifact,
 )
+from claude_dev_pipeline.duplicates import (
+    apply_duplicate,
+    open_run,
+    screen,
+)
+from claude_dev_pipeline.duplicates import (
+    enabled as duplicates_enabled,
+)
 from claude_dev_pipeline.harness import (
     allows_fast_lane,
     bootstrap_repo,
@@ -201,6 +209,13 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--tiers", type=Path)
     run.add_argument("--budget-policy", type=Path)
     run.add_argument("--clarity", type=Path)
+    run.add_argument("--duplicate-issues", type=Path)
+    run.add_argument("--duplicate-fixture", type=Path)
+    run.add_argument(
+        "--force",
+        action="store_true",
+        help="start a run even when this issue already has a pipeline run",
+    )
     run.add_argument(
         "--ask-inline",
         action="store_true",
@@ -531,6 +546,8 @@ def _run(args: argparse.Namespace) -> int:
                 return 3
             if _clarity_stop(args, pipeline, snapshot, run_dir, state, result.decision):
                 return _finish(2, "needs-info")
+            if _duplicate_stop(args, pipeline, snapshot, run_dir, run_id, work_cap):
+                return _finish(2, "duplicate")
             spec_status = None
             plan_status = None
             if "spec" in completed and (run_dir / "spec.json").is_file():
@@ -791,6 +808,48 @@ def _config_digest(args: argparse.Namespace) -> str:
         if value:
             paths.append(Path(value))
     return input_hash(*paths)
+
+
+def _duplicate_stop(args, pipeline, snapshot, run_dir: Path, run_id: str, cap: int) -> bool:
+    if snapshot is None or not duplicates_enabled(pipeline):
+        return False
+    number = snapshot.get("number")
+    if number is not None and not getattr(args, "force", False):
+        found = open_run(run_dir.parent, int(number), run_id)
+        if found:
+            apply_duplicate(
+                run_dir,
+                run_id,
+                snapshot,
+                {
+                    "halted": True,
+                    "reason": "already-open",
+                    "open_run": found,
+                    "candidates": [],
+                    "score": 1,
+                    "model_called": False,
+                    "amount_cents": 0,
+                },
+                pipeline,
+                run_cap_cents=cap,
+            )
+            print(f"duplicate: already open {found}")
+            return True
+    others: list = []
+    listed = getattr(args, "duplicate_issues", None)
+    if listed is not None and Path(listed).is_file():
+        loaded = json.loads(Path(listed).read_text(encoding="utf-8"))
+        others = loaded if isinstance(loaded, list) else []
+    fixture = None
+    fixture_path = getattr(args, "duplicate_fixture", None)
+    if fixture_path is not None and Path(fixture_path).is_file():
+        fixture = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
+    report = screen(snapshot, others, pipeline, fixture=fixture)
+    if not report["halted"]:
+        return False
+    apply_duplicate(run_dir, run_id, snapshot, report, pipeline, run_cap_cents=cap)
+    print(f"duplicate: halt score={report.get('score')}")
+    return True
 
 
 def _clarity_stop(args, pipeline, snapshot, run_dir: Path, state: dict, decision: str) -> bool:

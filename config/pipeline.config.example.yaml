@@ -30,10 +30,20 @@ limits:
   max_diff_lines: 1500
 budgets_usd:
   run: 20
+fast:
+  max_files: 3
+  max_lines: 200
+  max_verify_failures: 2
+  security_globs:
+    - "**/auth/**"
+    - "**/*secret*"
+    - ".github/workflows/**"
 stages:
   triage:
     enabled: true
   tiers:
+    enabled: true
+  fast:
     enabled: true
   spec:
     enabled: true

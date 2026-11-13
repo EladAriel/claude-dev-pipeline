@@ -37,6 +37,15 @@ from claude_dev_pipeline.issues import (
     plan_status_write,
     write_outbox,
 )
+from claude_dev_pipeline.lanes import (
+    diff_stats,
+    escalate_for_diff,
+    fast_lane,
+    limits_for,
+    mark_escalated,
+    write_fast_review,
+    write_synthesized,
+)
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 from claude_dev_pipeline.plan import STAGES, Stage, require_gates
 from claude_dev_pipeline.scan import load_allowlist, scan_tree
@@ -326,35 +335,44 @@ def _run(args: argparse.Namespace) -> int:
                     work_cap = min(work_cap, budget)
                 models = apply_routing_models(models, routing)
                 print(f"tier: {routing.get('tier')} lane={routing.get('lane')}")
-            spec_status = _run_spec(
-                args,
-                run_dir=run_dir,
-                run_id=run_id,
-                models=models,
-                pipeline=pipeline,
-                caps=caps,
-                cap=work_cap,
-                spent_cents=spent_cents,
-            )
-            if spec_status == "failed":
-                return _finish(1, "stop")
-            if spec_status == "succeeded":
-                mode = "spec-fixture"
-                triage_status = "succeeded"
-            plan_status = _run_plan(
-                args,
-                run_dir=run_dir,
-                run_id=run_id,
-                models=models,
-                pipeline=pipeline,
-                caps=caps,
-                cap=work_cap,
-            )
-            if plan_status == "failed":
-                return _finish(1, "stop")
-            if plan_status == "succeeded":
-                mode = "plan-fixture"
-                triage_status = "succeeded"
+            on_fast = fast_lane(pipeline, routing) and result.decision == "route"
+            spec_status = None
+            plan_status = None
+            if on_fast:
+                issue = json.loads((run_dir / "issue.json").read_text(encoding="utf-8"))
+                write_synthesized(run_dir, issue)
+                print("fast-lane: skipped spec and plan")
+                mode = "fast-lane"
+            else:
+                spec_status = _run_spec(
+                    args,
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    models=models,
+                    pipeline=pipeline,
+                    caps=caps,
+                    cap=work_cap,
+                    spent_cents=spent_cents,
+                )
+                if spec_status == "failed":
+                    return _finish(1, "stop")
+                if spec_status == "succeeded":
+                    mode = "spec-fixture"
+                    triage_status = "succeeded"
+                plan_status = _run_plan(
+                    args,
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    models=models,
+                    pipeline=pipeline,
+                    caps=caps,
+                    cap=work_cap,
+                )
+                if plan_status == "failed":
+                    return _finish(1, "stop")
+                if plan_status == "succeeded":
+                    mode = "plan-fixture"
+                    triage_status = "succeeded"
             impl_status = _run_implement(
                 args,
                 run_dir=run_dir,
@@ -374,15 +392,32 @@ def _run(args: argparse.Namespace) -> int:
                 triage_status = "blocked"
                 stop_reason = "implement-blocked"
             if impl_status == "succeeded":
-                verify_status = _run_verify(
-                    args,
-                    run_dir=run_dir,
-                    run_id=run_id,
-                    pipeline=pipeline,
-                    caps=caps,
-                    cap=work_cap,
-                    effort=str((models.get("verify") or {}).get("effort") or "low"),
-                )
+                if on_fast:
+                    files, line_count = diff_stats(run_dir)
+                    bigger = escalate_for_diff(files, line_count, limits_for(pipeline))
+                    if bigger:
+                        mark_escalated(run_dir, bigger, "diff")
+                        on_fast = False
+                        print(f"fast-lane: escalated to {bigger}")
+                verify_limit = limits_for(pipeline)["max_verify_failures"] if on_fast else 1
+                failures = 0
+                verify_status = None
+                while failures < verify_limit:
+                    verify_status = _run_verify(
+                        args,
+                        run_dir=run_dir,
+                        run_id=run_id,
+                        pipeline=pipeline,
+                        caps=caps,
+                        cap=work_cap,
+                        effort=str((models.get("verify") or {}).get("effort") or "low"),
+                    )
+                    if verify_status != "failed":
+                        break
+                    failures += 1
+                if on_fast and failures >= verify_limit and verify_status == "failed":
+                    mark_escalated(run_dir, "standard", "verify")
+                    print("fast-lane: escalated after repeated verify failures")
                 if verify_status == "failed":
                     mode = "verify-failed"
                     triage_status = "failed"
@@ -391,6 +426,8 @@ def _run(args: argparse.Namespace) -> int:
                 elif verify_status == "succeeded":
                     mode = "verify-pass"
                     triage_status = "succeeded"
+                    if on_fast and not (run_dir / "fast.json").is_file():
+                        write_fast_review(run_dir, pipeline)
                     review_status = _run_review(
                         args,
                         run_dir=run_dir,
@@ -427,6 +464,14 @@ def _run(args: argparse.Namespace) -> int:
                         elif pr_status == "draft":
                             mode = "pr-draft"
     return _finish(exit_code, stop_reason)
+
+
+def _fast_plan(run_dir: Path) -> dict:
+    path = run_dir / "fast.json"
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
 
 
 def _tiers(args: argparse.Namespace, pipeline: dict) -> dict | None:
@@ -720,6 +765,10 @@ def _run_review(
     codex_cfg = (pipeline.get("reviewers") or {}).get("codex") or {}
     quick = str((pipeline.get("review") or {}).get("quick_finder_model") or "claude-sonnet-5.5")
     finder = str((models.get("finder-bugs") or {}).get("model") or "claude-opus-5.5")
+    fast_plan = _fast_plan(run_dir)
+    codex_on = codex_cfg.get("enabled", True) is not False
+    if "codex" in fast_plan:
+        codex_on = codex_on and bool(fast_plan["codex"])
     try:
         result = execute_review(
             run_dir=run_dir,
@@ -732,9 +781,10 @@ def _run_review(
             review_cap_cents=caps["finder-bugs"],
             codex_cap_cents=caps["codex"],
             enabled=True,
-            codex_enabled=codex_cfg.get("enabled", True) is not False,
+            codex_enabled=codex_on,
             quick_model=quick,
             finder_model=finder,
+            only_checks=fast_plan.get("only_checks"),
         )
     except ReviewSkipped as exc:
         print(f"review: skipped ({exc})")

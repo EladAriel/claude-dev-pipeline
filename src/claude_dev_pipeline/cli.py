@@ -41,6 +41,7 @@ from claude_dev_pipeline.stages.implement import (
     fanout_lines,
 )
 from claude_dev_pipeline.stages.plan import PlanError, PlanSkipped, execute_plan
+from claude_dev_pipeline.stages.review import ReviewError, ReviewSkipped, execute_review
 from claude_dev_pipeline.stages.spec import SpecError, SpecSkipped, execute_spec
 from claude_dev_pipeline.stages.triage import TriageError, execute_triage
 from claude_dev_pipeline.stages.verify import VerifyError, execute_verify
@@ -112,6 +113,11 @@ def _parser() -> argparse.ArgumentParser:
         "--verify-fixture",
         type=Path,
         help="recorded failure summary; not read when every check passes",
+    )
+    run.add_argument(
+        "--review-fixture",
+        type=Path,
+        help="recorded finder and vote rounds; Codex stays a local subprocess",
     )
     run.add_argument("--target-repo", type=Path)
 
@@ -284,6 +290,22 @@ def _run(args: argparse.Namespace) -> int:
                 elif verify_status == "succeeded":
                     mode = "verify-pass"
                     triage_status = "succeeded"
+                    review_status = _run_review(
+                        args,
+                        run_dir=run_dir,
+                        run_id=run_id,
+                        models=models,
+                        pipeline=pipeline,
+                        caps=caps,
+                        cap=cap,
+                    )
+                    if review_status == "failed":
+                        mode = "review-blocked"
+                        triage_status = "failed"
+                        exit_code = 1
+                    elif review_status == "succeeded":
+                        mode = "review-pass"
+                        triage_status = "succeeded"
     print("claude-dev-pipeline scaffold")
     print(f"mode: {mode}")
     print("api-calls: none")
@@ -516,6 +538,62 @@ def _run_verify(
     return "failed" if result.status == "fail" else "succeeded"
 
 
+def _run_review(
+    args: argparse.Namespace,
+    *,
+    run_dir: Path,
+    run_id: str,
+    models: dict,
+    pipeline: dict,
+    caps: dict[str, int],
+    cap: int,
+) -> str | None:
+    if not stage_enabled(pipeline, "review"):
+        print("review: disabled by stages.review.enabled")
+        return "skipped"
+    if getattr(args, "review_fixture", None) is None:
+        print("review: skipped (no fixture)")
+        return "skipped"
+    triage_path = run_dir / "triage.json"
+    tier = "Standard"
+    if triage_path.is_file():
+        tier = str(json.loads(triage_path.read_text(encoding="utf-8")).get("risk_tier") or tier)
+    codex_cfg = (pipeline.get("reviewers") or {}).get("codex") or {}
+    quick = str((pipeline.get("review") or {}).get("quick_finder_model") or "claude-sonnet-5.5")
+    finder = str((models.get("finder-bugs") or {}).get("model") or "claude-opus-5.5")
+    try:
+        result = execute_review(
+            run_dir=run_dir,
+            run_id=run_id,
+            fixture_path=args.review_fixture,
+            triage_tier=tier,
+            config=pipeline,
+            spent_cents=_spent_cents(run_dir),
+            run_cap_cents=cap,
+            review_cap_cents=caps["finder-bugs"],
+            codex_cap_cents=caps["codex"],
+            enabled=True,
+            codex_enabled=codex_cfg.get("enabled", True) is not False,
+            quick_model=quick,
+            finder_model=finder,
+        )
+    except ReviewSkipped as exc:
+        print(f"review: skipped ({exc})")
+        return "skipped"
+    except BudgetHardStop as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    except ReviewError as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    print(f"review: {result.status} depth={result.depth}")
+    print(f"review-cross-model: {str(result.cross_model).lower()}")
+    print(f"review-rounds: {result.rounds_run}")
+    if result.security_block or result.status == "failure":
+        return "failed"
+    return "succeeded"
+
+
 def _implement_cfg(models: dict, pipeline: dict) -> dict:
     cfg = dict(models.get("implement") or {})
     override = (pipeline.get("models") or {}).get("implement") or {}
@@ -667,6 +745,10 @@ def _dry_run(args: argparse.Namespace) -> int:
     print(f"run-cap: {format_usd(cap)}")
     _print_stages(models, pipeline, caps)
     _print_fanout(args, models, pipeline)
+    print(
+        "review: Quick/Standard/Deep from triage and diff; "
+        "finders bug-hunt, simplify, end-to-end; codex read-only; max 3 rounds"
+    )
     return 0
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from claude_dev_pipeline.clarity import summary_lines
 from claude_dev_pipeline.conflicts import summary_lines as conflict_lines
+from claude_dev_pipeline.docs_lane import summary_lines as docs_lines
 from claude_dev_pipeline.duplicates import summary_lines as duplicate_lines
 from claude_dev_pipeline.flaky import risk_line
 from claude_dev_pipeline.github_gate import admit_issue
@@ -69,6 +70,7 @@ def write_summary(
     lines.extend(summary_lines(run_dir))
     lines.extend(duplicate_lines(run_dir))
     lines.extend(conflict_lines(run_dir))
+    lines.extend(docs_lines(run_dir))
     text = "\n".join(lines) + "\n"
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "summary.md").write_text(text, encoding="utf-8")

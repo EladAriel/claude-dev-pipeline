@@ -37,6 +37,10 @@ from claude_dev_pipeline.db import (
     rebuild_db,
     write_run_artifact,
 )
+from claude_dev_pipeline.docs_lane import active as docs_active
+from claude_dev_pipeline.docs_lane import enter as enter_docs
+from claude_dev_pipeline.docs_lane import leaves_docs
+from claude_dev_pipeline.docs_lane import mark_escalated as mark_docs_escalated
 from claude_dev_pipeline.duplicates import (
     apply_duplicate,
     open_run,
@@ -513,6 +517,12 @@ def _run(args: argparse.Namespace) -> int:
                     mark_escalated(run_dir, "standard", "no-tests")
                     on_fast = False
                     print("verify: no tests; fast lane escalated")
+            on_docs = False
+            if result.decision == "route":
+                on_docs, work_cap = enter_docs(run_dir, pipeline, work_cap)
+                if on_docs:
+                    on_fast = False
+                    print("docs-lane: docs and non-executable config only")
             downgraded = False
 
             def _gate(stage: str, fixture: Path | None) -> str | None:
@@ -553,11 +563,15 @@ def _run(args: argparse.Namespace) -> int:
             if "spec" in completed and (run_dir / "spec.json").is_file():
                 print("resume: skip spec")
                 spec_status = "succeeded"
-            elif on_fast:
+            elif on_fast or on_docs:
                 issue = json.loads((run_dir / "issue.json").read_text(encoding="utf-8"))
                 write_synthesized(run_dir, issue)
-                print("fast-lane: skipped spec and plan")
-                mode = "fast-lane"
+                if on_docs:
+                    print("docs-lane: skipped spec and plan")
+                    mode = "docs-lane"
+                else:
+                    print("fast-lane: skipped spec and plan")
+                    mode = "fast-lane"
             else:
                 if _gate("spec", getattr(args, "spec_fixture", None)) == "halt":
                     return _finish(1, "budget-halt")
@@ -578,7 +592,7 @@ def _run(args: argparse.Namespace) -> int:
                     triage_status = "succeeded"
                     if _note("spec"):
                         return 3
-            if not on_fast:
+            if not on_fast and not on_docs:
                 if "plan" in completed and (run_dir / "plan.json").is_file():
                     print("resume: skip plan")
                     plan_status = "succeeded"
@@ -616,6 +630,7 @@ def _run(args: argparse.Namespace) -> int:
                 if (
                     stage_enabled(pipeline, "verification")
                     and args.target_repo is not None
+                    and not on_docs
                     and bootstrap_repo(args.target_repo, pipeline)
                 ):
                     harness_ticket = note_harness_ticket(run_dir, args.target_repo)
@@ -668,6 +683,13 @@ def _run(args: argparse.Namespace) -> int:
                         mark_escalated(run_dir, bigger, "diff")
                         on_fast = False
                         print(f"fast-lane: escalated to {bigger}")
+                if on_docs:
+                    files, _lines = diff_stats(run_dir)
+                    if leaves_docs(files, pipeline):
+                        mark_docs_escalated(run_dir)
+                        mark_escalated(run_dir, "standard", "docs-diff")
+                        on_docs = False
+                        print("docs-lane: escalated")
                 if "verify" in completed and (run_dir / "verify.json").is_file():
                     print("resume: skip verify")
                     verify_status = "succeeded"
@@ -1016,10 +1038,15 @@ def _emit_summary(args, run_dir: Path, run_id: str, asked: str, reason: str, cap
 
 def _fast_plan(run_dir: Path) -> dict:
     path = run_dir / "fast.json"
-    if not path.is_file():
-        return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return data if isinstance(data, dict) else {}
+    data = {}
+    if path.is_file():
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        data = loaded if isinstance(loaded, dict) else {}
+    if docs_active(run_dir):
+        data = dict(data)
+        data["only_checks"] = ["bug-hunt"]
+        data["codex"] = False
+    return data
 
 
 def _project(args, pipeline, models, stage, fixture, spent, cap):

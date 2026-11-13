@@ -47,6 +47,9 @@ stages:
     enabled: true
   fast:
     enabled: true
+  docs_lane:
+    enabled: true
+    budget_cents: 200
   debug:
     enabled: true
   summary:

@@ -18,6 +18,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Spec | Offline fixtures: `spec.json` has acceptance ids, seams, and e2e scenarios; a rejected triage writes none | `stages.spec.enabled: false`, then `git revert` the spec commit |
 | Plan | Offline fixtures: `plan.json` is an ordered DAG and covers every spec acceptance id; a spec that needs a human writes none | `stages.plan.enabled: false`, then `git revert` the plan commit |
 | Implement | Offline fixtures in a temp git repo: one local commit per done ticket; a blocked ticket stops the run; the diff is scanned | `stages.implement.enabled: false`, then `git revert` the implement commit |
+| Deps lane | A one-ecosystem manifest bump skips the fast lane; a major bump raises review | `stages.deps.enabled: false`, then `git revert` the deps-lane commit |
 | Verify | Offline fake commands: all-green writes `verify.json` without a model fixture; a failure stops the run | `stages.verify.enabled: false`, then `git revert` the verify commit |
 | Untested repo | No test command is unverified unless the user opts into that warning, or a harness is bootstrapped | `stages.verification.enabled: false`, then `git revert` the verification commit |
 | Flaky tests | A failing test is retried, compared with the base commit, and a pre-existing flake is quarantined | `stages.flaky.enabled: false`, then `git revert` the flaky-tests commit |

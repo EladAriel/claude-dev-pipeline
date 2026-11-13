@@ -37,6 +37,8 @@ from claude_dev_pipeline.db import (
     rebuild_db,
     write_run_artifact,
 )
+from claude_dev_pipeline.deps import enter as enter_deps
+from claude_dev_pipeline.deps import finalize as finalize_deps
 from claude_dev_pipeline.docs_lane import active as docs_active
 from claude_dev_pipeline.docs_lane import enter as enter_docs
 from claude_dev_pipeline.docs_lane import leaves_docs
@@ -219,6 +221,11 @@ def _parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="start a run even when this issue already has a pipeline run",
+    )
+    run.add_argument(
+        "--changelog-fixture",
+        type=Path,
+        help="offline release notes for a dependency bump",
     )
     run.add_argument(
         "--ask-inline",
@@ -524,6 +531,14 @@ def _run(args: argparse.Namespace) -> int:
                     on_fast = False
                     print("docs-lane: docs and non-executable config only")
             downgraded = False
+            if result.decision == "route":
+                deps_decision = enter_deps(run_dir, pipeline)
+                if deps_decision.get("split"):
+                    print("deps: one ecosystem per PR")
+                    return _finish(2, "deps-split")
+                if deps_decision.get("lane") == "deps":
+                    on_fast = False
+                    print(f"deps-lane: {deps_decision.get('ecosystem')}")
 
             def _gate(stage: str, fixture: Path | None) -> str | None:
                 nonlocal models, downgraded
@@ -690,6 +705,26 @@ def _run(args: argparse.Namespace) -> int:
                         mark_escalated(run_dir, "standard", "docs-diff")
                         on_docs = False
                         print("docs-lane: escalated")
+                if (run_dir / "deps.json").is_file() and args.target_repo is not None:
+                    issue_text = ""
+                    issue_path = run_dir / "issue.json"
+                    if issue_path.is_file():
+                        issue = json.loads(issue_path.read_text(encoding="utf-8"))
+                        issue_text = f"{issue.get('title') or ''}\n{issue.get('body') or ''}"
+                    deps_final = finalize_deps(
+                        run_dir,
+                        args.target_repo,
+                        diff_stats(run_dir)[0],
+                        issue_text,
+                        pipeline,
+                        getattr(args, "changelog_fixture", None),
+                    )
+                    if deps_final.get("extra"):
+                        print("deps: upgrade beyond the issue")
+                        return _finish(1, "deps-extra")
+                    if deps_final.get("advisory"):
+                        print("deps: advisory")
+                        return _finish(1, "deps-advisory")
                 if "verify" in completed and (run_dir / "verify.json").is_file():
                     print("resume: skip verify")
                     verify_status = "succeeded"
@@ -1443,6 +1478,12 @@ def _run_review(
     codex_on = codex_cfg.get("enabled", True) is not False
     if "codex" in fast_plan:
         codex_on = codex_on and bool(fast_plan["codex"])
+    deps_path = run_dir / "deps.json"
+    if deps_path.is_file():
+        deps = json.loads(deps_path.read_text(encoding="utf-8"))
+        if isinstance(deps, dict) and deps.get("major"):
+            tier = "Deep"
+            codex_on = True
     try:
         result = execute_review(
             run_dir=run_dir,

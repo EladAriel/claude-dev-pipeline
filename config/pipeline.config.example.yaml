@@ -74,6 +74,10 @@ stages:
     max_cents: 0
   review:
     enabled: true
+  reconcile:
+    enabled: true
+    max_per_round: 3
+    max_cents: 5
   pr:
     enabled: true
   retro:

@@ -12,6 +12,7 @@ from claude_dev_pipeline.flaky import body_lines
 from claude_dev_pipeline.github_gate import admit_issue
 from claude_dev_pipeline.issues import plan_status_write
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
+from claude_dev_pipeline.reconcile import dispute_lines
 
 ALLOWED_PR_TOOL = "create_pull_request"
 DENIED_TOOLS = {"merge_pull_request", "merge", "update_pull_request"}
@@ -131,6 +132,7 @@ def render_pr(run_dir: Path, *, issue_number: int | None, usage_cents: int) -> t
     summary = str(review.get("summary") or "")
     if summary:
         lines.append(summary)
+    lines.extend(dispute_lines(review))
     lines.append("")
     lines.append(f"Cost so far: ${ledger_cost / 100:.2f}")
     return title, "\n".join(lines) + "\n", ledger_cost

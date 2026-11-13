@@ -66,6 +66,12 @@ skills:
     sha: d1478fcb140db0b93c0c8df17bcfd311844749d0
     path: skills/engineering/retro/SKILL.md
     url: https://github.com/mattpocock/skills/blob/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/retro/SKILL.md
+  - name: diagnosing-bugs
+    stage: debug
+    repo: https://github.com/mattpocock/skills
+    sha: d1478fcb140db0b93c0c8df17bcfd311844749d0
+    path: skills/engineering/diagnosing-bugs/SKILL.md
+    url: https://github.com/mattpocock/skills/blob/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/diagnosing-bugs/SKILL.md
 # Declared by the skills above. Still not copied.
 dependencies:
   - name: grilling

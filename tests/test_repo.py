@@ -44,6 +44,7 @@ def test_manifest_pins_the_plugin_without_copying_it(repo_root):
         "code-review",
         "pr",
         "retro",
+        "diagnosing-bugs",
     }
     assert set(names) == expected
     for item in data["skills"] + data["dependencies"]:

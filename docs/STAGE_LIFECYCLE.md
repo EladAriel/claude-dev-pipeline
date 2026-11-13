@@ -6,7 +6,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Stage | Verify | Rollback |
 | --- | --- | --- |
 | Scaffold (this change) | `ruff`, `pytest`, gitleaks, `pipeline scan-paths`, `pipeline --dry-run` | Revert the pull request |
-| Triage | Unapproved items produce no model call | Disable the stage and revert its pull request |
+| Triage | Offline fixtures: unapproved issues make no model call; `triage.json` matches the schema | `stages.triage.enabled: false`, then `git revert` the triage commit |
 | Spec | Acceptance ids, seams, and end-to-end scenarios are present | Disable the stage and revert |
 | Plan | The ticket graph is a valid DAG | Disable the stage and revert |
 | Implement | Red-green evidence; pushes stay on `agent/*` | Delete the `agent/*` branch and revert |

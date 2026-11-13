@@ -22,6 +22,7 @@ class LedgerEntry:
     cache_read_tokens: int = 0
     output_tokens: int = 0
     web_searches: int = 0
+    budget_cents: int = 0
 
 
 class LedgerError(Exception):
@@ -57,6 +58,7 @@ class Ledger:
                         cache_read_tokens=int(payload.get("cache_read_tokens", 0)),
                         output_tokens=int(payload.get("output_tokens", 0)),
                         web_searches=int(payload.get("web_searches", 0)),
+                        budget_cents=int(payload.get("budget_cents", 0)),
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:

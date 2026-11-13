@@ -1,17 +1,15 @@
 from copy import deepcopy
 
-from tests.conftest import repo_root
-
 from claude_dev_pipeline.config import load_yaml
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 
 
-def _example() -> dict:
-    return load_yaml(repo_root() / "config/pipeline.config.example.yaml")
+def _example(repo_root) -> dict:
+    return load_yaml(repo_root / "config/pipeline.config.example.yaml")
 
 
-def test_example_mcp_config_is_off_and_valid():
-    config = _example()
+def test_example_mcp_config_is_off_and_valid(repo_root):
+    config = _example(repo_root)
     assert validate_mcp_config(config) == []
     for spec in config["mcp_servers"].values():
         assert spec["enabled"] is False
@@ -25,8 +23,8 @@ def test_example_mcp_config_is_off_and_valid():
     assert "merge_pull_request" in config["mcp_servers"]["github_pull_requests"]["deny_tools"]
 
 
-def test_policy_rejects_merge_stdio_and_confluence_writes():
-    config = _example()
+def test_policy_rejects_merge_stdio_and_confluence_writes(repo_root):
+    config = _example(repo_root)
     merged = deepcopy(config)
     merged["mcp_servers"]["github_pull_requests"]["stages"]["pr"]["tools"] = ["merge_pull_request"]
     assert any("create_pull_request" in item for item in validate_mcp_config(merged))

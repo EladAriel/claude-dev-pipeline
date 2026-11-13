@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Local deterministic orchestrator scaffold for a generic software-dev pipeline."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "EladAriel" }]
 dependencies = ["PyYAML>=6"]
 
@@ -32,4 +32,4 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --import-mode=importlib"

@@ -2,15 +2,14 @@ import ast
 import subprocess
 
 import yaml
-from tests.conftest import repo_root
 
 from claude_dev_pipeline.config import load_yaml
 from claude_dev_pipeline.plan import DEFAULT_CAPS_CENTS, DEFAULT_MODELS, STAGES, require_gates
 
 
-def test_every_stage_has_a_gate_and_a_budget():
+def test_every_stage_has_a_gate_and_a_budget(repo_root):
     require_gates()
-    root = repo_root()
+    root = repo_root
     budgets = load_yaml(root / "config/budgets.yaml")
     models = load_yaml(root / "config/models.yaml")
     example = load_yaml(root / "config/pipeline.config.example.yaml")
@@ -28,8 +27,8 @@ def test_every_stage_has_a_gate_and_a_budget():
         assert example["models"][stage.model_key]["model"] == models[stage.model_key]["model"]
 
 
-def test_manifest_pins_the_plugin_without_copying_it():
-    data = load_yaml(repo_root() / "skills/manifest.yaml")
+def test_manifest_pins_the_plugin_without_copying_it(repo_root):
+    data = load_yaml(repo_root / "skills/manifest.yaml")
     pin = "d1478fcb140db0b93c0c8df17bcfd311844749d0"
     assert data["plugin"]["version"] == "1.3.2"
     assert data["plugin"]["vendored"] is False
@@ -52,8 +51,8 @@ def test_manifest_pins_the_plugin_without_copying_it():
         assert item["url"].endswith(item["path"])
 
 
-def test_workflows_do_not_react_to_stranger_pull_requests():
-    workflows = repo_root() / ".github" / "workflows"
+def test_workflows_do_not_react_to_stranger_pull_requests(repo_root):
+    workflows = repo_root / ".github" / "workflows"
     for path in workflows.glob("*.yml"):
         text = path.read_text(encoding="utf-8")
         assert "pull_request" not in text
@@ -65,8 +64,8 @@ def test_workflows_do_not_react_to_stranger_pull_requests():
         assert data["permissions"]["contents"] == "read"
 
 
-def test_env_example_has_names_only_and_secrets_are_ignored():
-    root = repo_root()
+def test_env_example_has_names_only_and_secrets_are_ignored(repo_root):
+    root = repo_root
     for line in (root / ".env.example").read_text(encoding="utf-8").splitlines():
         if not line or line.startswith("#"):
             continue
@@ -95,8 +94,8 @@ def test_env_example_has_names_only_and_secrets_are_ignored():
     assert visible.returncode != 0
 
 
-def test_python_source_does_not_call_a_model_or_merge():
-    root = repo_root() / "src"
+def test_python_source_does_not_call_a_model_or_merge(repo_root):
+    root = repo_root / "src"
     for path in root.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "/" + "merge" not in text

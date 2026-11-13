@@ -1,24 +1,21 @@
 import json
 
-from tests.conftest import repo_root
-
 from claude_dev_pipeline.cli import main
 
 
-def _paths():
-    root = repo_root()
+def _paths(repo_root):
     return [
         "--config",
-        str(root / "config/pipeline.config.example.yaml"),
+        str(repo_root / "config/pipeline.config.example.yaml"),
         "--models",
-        str(root / "config/models.yaml"),
+        str(repo_root / "config/models.yaml"),
         "--budgets",
-        str(root / "config/budgets.yaml"),
+        str(repo_root / "config/budgets.yaml"),
     ]
 
 
-def test_dry_run_prints_the_plan_without_recording(tmp_path, capsys):
-    code = main(["--dry-run", *_paths()])
+def test_dry_run_prints_the_plan_without_recording(tmp_path, capsys, repo_root):
+    code = main(["--dry-run", *_paths(repo_root)])
     out = capsys.readouterr().out
     assert code == 0
     assert "mode: dry-run" in out
@@ -37,10 +34,12 @@ def test_run_without_intake_is_rejected(capsys):
     assert main(["run"]) == 2
 
 
-def test_task_intake_then_status(tmp_path, capsys):
+def test_task_intake_then_status(tmp_path, capsys, repo_root):
     db_path = tmp_path / "pipeline.db"
     runs = tmp_path / "runs"
-    code = main(["run", "add a parser", "--runs-dir", str(runs), "--db", str(db_path), *_paths()])
+    code = main(
+        ["run", "add a parser", "--runs-dir", str(runs), "--db", str(db_path), *_paths(repo_root)]
+    )
     out = capsys.readouterr().out
     assert code == 0
     assert "intake: task" in out

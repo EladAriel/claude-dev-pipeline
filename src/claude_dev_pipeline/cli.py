@@ -34,6 +34,12 @@ from claude_dev_pipeline.issues import (
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 from claude_dev_pipeline.plan import STAGES, Stage, require_gates
 from claude_dev_pipeline.scan import load_allowlist, scan_tree
+from claude_dev_pipeline.stages.implement import (
+    ImplementError,
+    ImplementSkipped,
+    execute_implement,
+    fanout_lines,
+)
 from claude_dev_pipeline.stages.plan import PlanError, PlanSkipped, execute_plan
 from claude_dev_pipeline.stages.spec import SpecError, SpecSkipped, execute_spec
 from claude_dev_pipeline.stages.triage import TriageError, execute_triage
@@ -96,6 +102,12 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="recorded plan response; skipped when the spec needs a human",
     )
+    run.add_argument(
+        "--implement-fixture",
+        type=Path,
+        help="recorded per-ticket edits; never publishes the target repo",
+    )
+    run.add_argument("--target-repo", type=Path)
 
     status = sub.add_parser("status", help="print the latest local run")
     status.add_argument("--db", type=Path)
@@ -231,6 +243,23 @@ def _run(args: argparse.Namespace) -> int:
             if plan_status == "succeeded":
                 mode = "plan-fixture"
                 triage_status = "succeeded"
+            impl_status = _run_implement(
+                args,
+                run_dir=run_dir,
+                run_id=run_id,
+                models=models,
+                pipeline=pipeline,
+                caps=caps,
+                cap=cap,
+            )
+            if impl_status == "failed":
+                return 1
+            if impl_status == "succeeded":
+                mode = "implement-fixture"
+                triage_status = "succeeded"
+            if impl_status == "blocked":
+                mode = "implement-blocked"
+                triage_status = "blocked"
     print("claude-dev-pipeline scaffold")
     print(f"mode: {mode}")
     print("api-calls: none")
@@ -375,6 +404,71 @@ def _run_plan(
     return "succeeded"
 
 
+def _run_implement(
+    args: argparse.Namespace,
+    *,
+    run_dir: Path,
+    run_id: str,
+    models: dict,
+    pipeline: dict,
+    caps: dict[str, int],
+    cap: int,
+) -> str | None:
+    if getattr(args, "implement_fixture", None) is None:
+        return None
+    if not stage_enabled(pipeline, "implement"):
+        print("implement: disabled by stages.implement.enabled")
+        return "skipped"
+    plan_path = run_dir / "plan.json"
+    if not plan_path.is_file():
+        print("implement: skipped (no plan)")
+        return "skipped"
+    if args.target_repo is None:
+        print("implement requires --target-repo", file=sys.stderr)
+        return "failed"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    cfg = _implement_cfg(models, pipeline)
+    try:
+        result = execute_implement(
+            plan=plan,
+            fixture_path=args.implement_fixture,
+            run_dir=run_dir,
+            run_id=run_id,
+            target_repo=args.target_repo,
+            spent_cents=_spent_cents(run_dir),
+            run_cap_cents=cap,
+            stage_cap_cents=caps["implement"],
+            implement_cfg=cfg,
+            effort=str(cfg.get("effort") or "high"),
+        )
+    except ImplementSkipped as exc:
+        print(f"implement: skipped ({exc})")
+        return "skipped"
+    except BudgetHardStop as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    except ImplementError as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    print(f"implement: {result.status} tickets={','.join(result.tickets)}")
+    if result.stopped_at:
+        print(f"implement-stopped: {result.stopped_at}")
+    return result.status
+
+
+def _implement_cfg(models: dict, pipeline: dict) -> dict:
+    cfg = dict(models.get("implement") or {})
+    override = (pipeline.get("models") or {}).get("implement") or {}
+    if isinstance(override, dict):
+        if override.get("model"):
+            cfg["model"] = override["model"]
+        if override.get("effort"):
+            cfg["effort"] = override["effort"]
+        if override.get("allowlist"):
+            cfg["allowlist"] = override["allowlist"]
+    return cfg
+
+
 def _spent_cents(run_dir: Path) -> int:
     ledger = run_dir / "ledger.jsonl"
     if not ledger.is_file():
@@ -512,7 +606,19 @@ def _dry_run(args: argparse.Namespace) -> int:
     print("merge: none")
     print(f"run-cap: {format_usd(cap)}")
     _print_stages(models, pipeline, caps)
+    _print_fanout(args, models, pipeline)
     return 0
+
+
+def _print_fanout(args: argparse.Namespace, models: dict, pipeline: dict) -> None:
+    fixture = getattr(args, "plan_fixture", None)
+    if fixture is None or not Path(fixture).is_file():
+        print("implement-fanout: one session per ticket in plan order")
+        return
+    data = json.loads(Path(fixture).read_text(encoding="utf-8"))
+    tasks = (data.get("artifact") or data).get("tasks") or []
+    for line in fanout_lines(tasks, _implement_cfg(models, pipeline)):
+        print(line)
 
 
 def _load(args: argparse.Namespace) -> tuple[dict, dict, dict[str, int], int] | int:

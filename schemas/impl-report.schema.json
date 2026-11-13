@@ -1,9 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "impl-ticket",
   "type": "object",
   "additionalProperties": true,
-  "title": "impl-report",
   "required": [
-    "ticket"
-  ]
+    "ticket",
+    "files_changed",
+    "tests_added",
+    "test_command",
+    "test_result",
+    "commit_sha",
+    "status"
+  ],
+  "properties": {
+    "ticket": {"type": "string", "minLength": 1},
+    "branch": {"type": "string"},
+    "files_changed": {"type": "array", "items": {"type": "string"}},
+    "tests_added": {"type": "array", "items": {"type": "string"}},
+    "test_command": {"type": "string"},
+    "test_result": {"type": "object"},
+    "commit_sha": {"type": ["string", "null"]},
+    "status": {"enum": ["done", "blocked"]}
+  }
 }

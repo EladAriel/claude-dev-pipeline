@@ -63,6 +63,8 @@ def execute_implement(
     stage_cap_cents: int,
     implement_cfg: dict,
     effort: str = "high",
+    skip_tickets: set[str] | None = None,
+    on_ticket=None,
 ) -> ImplementResult:
     """Apply recorded edits in per-ticket worktrees of the target repo."""
     tasks = plan.get("tasks")
@@ -81,6 +83,9 @@ def execute_implement(
     shas: dict[str, str] = {}
     for task in tasks:
         ticket = str(task.get("id", "")).strip()
+        if skip_tickets and ticket in skip_tickets:
+            finished.append(ticket)
+            continue
         session = sessions.get(ticket)
         if not isinstance(session, dict):
             raise ImplementError(f"missing implement fixture for ticket {ticket}")
@@ -126,6 +131,8 @@ def execute_implement(
         if report["commit_sha"]:
             shas[ticket] = str(report["commit_sha"])
         finished.append(ticket)
+        if on_ticket is not None:
+            on_ticket(ticket, report)
         if report["status"] != "done":
             stopped = ticket
             break

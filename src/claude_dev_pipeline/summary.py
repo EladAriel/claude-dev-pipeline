@@ -65,14 +65,16 @@ def write_summary(
     text = "\n".join(lines) + "\n"
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "summary.md").write_text(text, encoding="utf-8")
+    comment = run_dir / "summary-comment.txt"
     if (
         snapshot
+        and not comment.exists()
         and admit_issue(
             labels=list(snapshot.get("labels") or []),
             timeline=list(snapshot.get("timeline") or []),
         ).allowed
     ):
-        (run_dir / "summary-comment.txt").write_text(text, encoding="utf-8")
+        comment.write_text(text, encoding="utf-8")
     if narrative and narrative_cents > 0 and run_id:
         Ledger(run_dir / "ledger.jsonl").append(
             LedgerEntry(

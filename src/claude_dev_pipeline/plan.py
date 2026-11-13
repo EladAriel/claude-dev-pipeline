@@ -41,7 +41,7 @@ DEFAULT_MODELS: dict[str, dict[str, str]] = {
     "verifier": {"provider": "anthropic", "model": "claude-sonnet-5.5", "effort": "low"},
     "rank": {"provider": "anthropic", "model": "claude-sonnet-5.5", "effort": "low"},
     "pr": {"provider": "anthropic", "model": "claude-haiku-5.5", "effort": "low"},
-    "retro": {"provider": "anthropic", "model": "claude-sonnet-5.5", "effort": "medium"},
+    "retro": {"provider": "anthropic", "model": "claude-haiku-5.5", "effort": "low"},
     "codex": {"provider": "openai", "model": "gpt-6.1-sol", "effort": "none"},
 }
 

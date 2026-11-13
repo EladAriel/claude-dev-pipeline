@@ -89,6 +89,16 @@ def session_cost_usd(
     return tokens + runtime + (Decimal(web_searches) * WEB_SEARCH_USD)
 
 
+def stage_run_cap(*, run_cap_cents: int, retro_reserve_cents: int, stage: str) -> int:
+    """Keep a retro slice inside the run cap so the last stage can still book."""
+    if run_cap_cents < 0 or retro_reserve_cents < 0:
+        raise ValueError("budget cents must be >= 0")
+    if stage == "retro":
+        return run_cap_cents
+    reserve = min(retro_reserve_cents, run_cap_cents)
+    return run_cap_cents - reserve
+
+
 def authorize_session_cents(
     *,
     spent_cents: int,

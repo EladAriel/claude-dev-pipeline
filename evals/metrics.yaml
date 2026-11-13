@@ -22,3 +22,10 @@ review:
   - vote_agreement
 recorded_in: runs/pipeline.db
 table: run_metrics
+also_recorded:
+  - cost_by_stage
+  - cost_by_model
+  - tokens
+  - review_survivors_by_family
+  - verify_pass
+  - stop_reason

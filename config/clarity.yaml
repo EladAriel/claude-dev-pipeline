@@ -1,0 +1,6 @@
+# Cheap clarity check inside triage. Below the threshold, spec does not run.
+enabled: true
+threshold: 75
+max_questions: 3
+allowed_authors:
+  - EladAriel

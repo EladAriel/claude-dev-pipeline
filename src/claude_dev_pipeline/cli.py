@@ -21,6 +21,7 @@ from claude_dev_pipeline.checkpoint import (
     save_state,
     ticket_intact,
 )
+from claude_dev_pipeline.clarity import apply_clarity, load_clarity, score_issue
 from claude_dev_pipeline.config import (
     effective_model,
     load_yaml,
@@ -191,6 +192,12 @@ def _parser() -> argparse.ArgumentParser:
     resumed.add_argument("--db", type=Path)
     run.add_argument("--tiers", type=Path)
     run.add_argument("--budget-policy", type=Path)
+    run.add_argument("--clarity", type=Path)
+    run.add_argument(
+        "--ask-inline",
+        action="store_true",
+        help="ask clarity questions in this session instead of posting a comment",
+    )
     run.add_argument(
         "--summary-fixture",
         type=Path,
@@ -290,9 +297,16 @@ def _run(args: argparse.Namespace) -> int:
         run_dir = Path(resume_dir)
         state = load_state(run_dir)
         run_id = str(state["run_id"])
-        if _input_digest(args) != state.get("input_hash") and not getattr(args, "force", False):
-            print("resume: inputs changed since the checkpoint; pass --force", file=sys.stderr)
-            return 2
+        digest = _input_digest(args)
+        config_same = state.get("config_hash") == _config_digest(args)
+        issue_update = state.get("halt_reason") == "needs-info" and config_same
+        if digest != state.get("input_hash") and not getattr(args, "force", False):
+            if not issue_update:
+                print(
+                    "resume: inputs changed since the checkpoint; pass --force",
+                    file=sys.stderr,
+                )
+                return 2
         for ticket, record in list((state.get("tickets") or {}).items()):
             if record.get("status") == "done" and not ticket_intact(record):
                 discard_ticket(record)
@@ -316,6 +330,7 @@ def _run(args: argparse.Namespace) -> int:
         state["budgets"] = str(args.budgets or "")
         state["tiers"] = str(getattr(args, "tiers", "") or "")
         state["no_push"] = bool(getattr(args, "no_push", False))
+        state["config_hash"] = _config_digest(args)
     if getattr(args, "run_cap_cents", None):
         cap = int(args.run_cap_cents)
         work_cap = stage_run_cap(
@@ -500,6 +515,8 @@ def _run(args: argparse.Namespace) -> int:
 
             if _note("triage"):
                 return 3
+            if _clarity_stop(args, pipeline, snapshot, run_dir, state, result.decision):
+                return _finish(2, "needs-info")
             spec_status = None
             plan_status = None
             if "spec" in completed and (run_dir / "spec.json").is_file():
@@ -699,6 +716,66 @@ def _run(args: argparse.Namespace) -> int:
                         elif pr_status == "draft":
                             mode = "pr-draft"
     return _finish(exit_code, stop_reason)
+
+
+def _config_digest(args: argparse.Namespace) -> str:
+    paths = []
+    for attr in ("config", "models", "budgets", "tiers"):
+        value = getattr(args, attr, None)
+        if value:
+            paths.append(Path(value))
+    return input_hash(*paths)
+
+
+def _clarity_stop(args, pipeline, snapshot, run_dir: Path, state: dict, decision: str) -> bool:
+    if decision != "route" or not stage_enabled(pipeline, "clarity"):
+        return False
+    policy = load_clarity(getattr(args, "clarity", None) or Path("config/clarity.yaml"))
+    if not policy.get("enabled", True):
+        return False
+    classify = "bug"
+    triage_path = run_dir / "triage.json"
+    if triage_path.is_file():
+        classify = str(json.loads(triage_path.read_text(encoding="utf-8")).get("classify") or "bug")
+    existing = run_dir / "clarity.json"
+    if existing.is_file():
+        previous = json.loads(existing.read_text(encoding="utf-8"))
+        report = score_issue(
+            snapshot,
+            classify,
+            threshold=int(policy.get("threshold") or 75),
+            max_questions=int(policy.get("max_questions") or 3),
+        )
+        report["rescored"] = True
+        report["inline"] = bool(getattr(args, "ask_inline", False))
+        if not report["halted"]:
+            brief = run_dir / "agent-brief.md"
+            extra = "\n\nOwner answers:\n" + str(snapshot.get("body") or "") + "\n"
+            brief.write_text(brief.read_text(encoding="utf-8") + extra, encoding="utf-8")
+            state["halt_reason"] = ""
+        elif previous.get("commented"):
+            report["commented"] = True
+        existing.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    else:
+        report = apply_clarity(
+            run_dir,
+            snapshot,
+            classify,
+            policy,
+            inline=bool(getattr(args, "ask_inline", False)),
+        )
+    if not report["halted"]:
+        return False
+    state["halt_reason"] = "needs-info"
+    state["config_hash"] = _config_digest(args)
+    save_state(run_dir, state)
+    if report.get("inline"):
+        print("clarity: ask inline")
+        for question in report.get("questions") or []:
+            print(f"clarity-question: {question}")
+    else:
+        print(f"clarity: halt score={report.get('score')}")
+    return True
 
 
 def _fixture_map(args: argparse.Namespace) -> dict:

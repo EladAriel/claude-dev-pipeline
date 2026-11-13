@@ -53,4 +53,4 @@ Tools stay read-only: `read`, `grep`, `glob`, and `bash` with `read_only`. Do no
 
 GitHub and Atlassian MCP reads are configured for this stage and stay disabled until the repo turns them on. Do not call them while they are disabled. Never use a write tool, `merge_pull_request`, `executeWrite`, or `executeDestructive`.
 
-Write `spec.md` and `spec.json`. The JSON has acceptance criteria with ids, agreed test seams, end-to-end scenarios, and open questions. Each question says whether it blocks. Set `needs_human` to true when any question blocks, and to false when none do. `spec.md` quotes every acceptance id. Do not post the spec.
+Write `spec.md` and `spec.json`. The JSON has acceptance criteria with ids, agreed test seams, end-to-end scenarios, and open questions. Each question says whether it blocks. Set `needs_human` to true when any question blocks, and to false when none do. `spec.md` quotes every acceptance id. Any assumption is an explicit entry with `explicit: true`, quoted in `spec.md`. If the owner has not confirmed it, ask a question instead of guessing. Do not post the spec.

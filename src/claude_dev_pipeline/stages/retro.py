@@ -96,6 +96,7 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
     triage = _read(run_dir / "triage.json")
     routing = triage.get("routing") if isinstance(triage.get("routing"), dict) else {}
     halt = _read(run_dir / "halt.json")
+    clarity = _read(run_dir / "clarity.json")
     survivors: dict[str, int] = {}
     for finding in review.get("findings") or []:
         if finding.get("survived"):
@@ -125,6 +126,8 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
         "tier": routing.get("tier") or triage.get("tier"),
         "lane": routing.get("lane"),
         "escalated": bool(routing.get("escalated")),
+        "clarity_score": clarity.get("score"),
+        "clarity_halted": bool(clarity.get("halted")),
         "review_survivors_by_family": survivors,
         "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
     }

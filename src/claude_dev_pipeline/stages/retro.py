@@ -120,6 +120,7 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
         "owner_interventions": 0,
         "rounds_to_pass": int(review.get("rounds_run") or 0),
         "verify_pass": verify_pass,
+        "verification": verify.get("verification") or verify.get("status") or "",
         "stop_reason": stop_reason,
         "halt_reason": halt.get("halt_reason") or "",
         "needed_cents": int(halt.get("needed_cents") or 0),

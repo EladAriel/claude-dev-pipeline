@@ -36,6 +36,13 @@ from claude_dev_pipeline.db import (
     rebuild_db,
     write_run_artifact,
 )
+from claude_dev_pipeline.harness import (
+    allows_fast_lane,
+    bootstrap_repo,
+    discover,
+    note_harness_ticket,
+    raise_depth,
+)
 from claude_dev_pipeline.intake import (
     IntakeError,
     intake_from_issue,
@@ -484,6 +491,12 @@ def _run(args: argparse.Namespace) -> int:
                 models = apply_routing_models(models, routing)
                 print(f"tier: {routing.get('tier')} lane={routing.get('lane')}")
             on_fast = fast_lane(pipeline, routing) and result.decision == "route"
+            if on_fast and args.target_repo is not None:
+                found = discover(args.target_repo, pipeline).get("found")
+                if not allows_fast_lane(bool(found)):
+                    mark_escalated(run_dir, "standard", "no-tests")
+                    on_fast = False
+                    print("verify: no tests; fast lane escalated")
             downgraded = False
 
             def _gate(stage: str, fixture: Path | None) -> str | None:
@@ -581,11 +594,21 @@ def _run(args: argparse.Namespace) -> int:
             else:
                 if _gate("implement", getattr(args, "implement_fixture", None)) == "halt":
                     return _finish(1, "budget-halt")
+                harness_ticket = None
+                if (
+                    stage_enabled(pipeline, "verification")
+                    and args.target_repo is not None
+                    and bootstrap_repo(args.target_repo, pipeline)
+                ):
+                    harness_ticket = note_harness_ticket(run_dir, args.target_repo)
+                    print("verify: bootstrapped a test harness")
                 skip = {
                     ticket
                     for ticket, record in (state.get("tickets") or {}).items()
                     if record.get("status") == "done" and ticket_intact(record)
                 }
+                if harness_ticket:
+                    skip.add(harness_ticket)
 
                 def _on_ticket(ticket: str, report: dict) -> None:
                     record_ticket(state, ticket, report)
@@ -1277,6 +1300,11 @@ def _run_review(
         triage = json.loads(triage_path.read_text(encoding="utf-8"))
         routing = triage.get("routing") if isinstance(triage.get("routing"), dict) else {}
         tier = str(routing.get("review_depth") or triage.get("risk_tier") or tier)
+        verify_path = run_dir / "verify.json"
+        if verify_path.is_file():
+            verify = json.loads(verify_path.read_text(encoding="utf-8"))
+            if verify.get("status") == "unverified":
+                tier = raise_depth(tier)
     codex_cfg = (pipeline.get("reviewers") or {}).get("codex") or {}
     quick = str((pipeline.get("review") or {}).get("quick_finder_model") or "claude-sonnet-5.5")
     finder = str((models.get("finder-bugs") or {}).get("model") or "claude-opus-5.5")

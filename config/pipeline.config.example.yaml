@@ -56,6 +56,9 @@ stages:
     enabled: true
   clarity:
     enabled: true
+  verification:
+    enabled: true
+    mode: bootstrap
   spec:
     enabled: true
   plan:

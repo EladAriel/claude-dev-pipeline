@@ -111,6 +111,12 @@ def _tier_line(routing: dict, metrics: dict) -> str:
 
 
 def _risks(run_dir: Path, metrics: dict) -> str:
+    verify = _read(run_dir / "verify.json")
+    if verify.get("status") == "unverified":
+        return (
+            "WARNING: no test command was detected. Verification is unverified. "
+            "Review depth was raised one level."
+        )
     if (run_dir / "diagnosis.md").is_file() and not (run_dir / "pr.json").is_file():
         return "The diagnosis is not a fix. Nothing has been merged."
     if metrics.get("stop_reason") == "budget-halt" or metrics.get("budget_events"):

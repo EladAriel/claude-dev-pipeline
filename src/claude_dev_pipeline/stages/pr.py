@@ -109,6 +109,10 @@ def render_pr(run_dir: Path, *, issue_number: int | None, usage_cents: int) -> t
     title = str(spec.get("title") or "Pipeline change")
     counts = _counts(review.get("findings") or [])
     lines = []
+    verify = _load(run_dir / "verify.json") if (run_dir / "verify.json").is_file() else {}
+    if verify.get("status") == "unverified":
+        lines.append("WARNING: no test command was detected. Verification is unverified.")
+        lines.append("")
     if issue_number is not None:
         lines.append(f"Fixes #{issue_number}")
         lines.append("")
@@ -133,7 +137,7 @@ def render_pr(run_dir: Path, *, issue_number: int | None, usage_cents: int) -> t
 def _require_ready(run_dir: Path) -> None:
     verify = _load(run_dir / "verify.json")
     review = _load(run_dir / "review.json")
-    if verify.get("status") != "pass":
+    if verify.get("status") not in {"pass", "unverified"}:
         raise PrBlocked("verify did not pass")
     if review.get("security_block") or review.get("status") == "failure":
         raise PrBlocked("review is blocking")

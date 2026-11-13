@@ -49,6 +49,7 @@ from claude_dev_pipeline.lanes import (
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 from claude_dev_pipeline.plan import STAGES, Stage, require_gates
 from claude_dev_pipeline.scan import load_allowlist, scan_tree
+from claude_dev_pipeline.stages.debug import DebugError, DebugSkipped, execute_debug
 from claude_dev_pipeline.stages.implement import (
     ImplementError,
     ImplementSkipped,
@@ -80,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
         return _issue_status(args)
     if args.command == "report":
         return _report(args)
+    if args.command == "debug":
+        return _debug(args)
     if args.command == "run":
         return _run(args)
     if args.dry_run:
@@ -156,6 +159,19 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="allow a tier XL run; without this flag XL stops before any later stage",
     )
+
+    debug = sub.add_parser("debug", help="read-only diagnosis in a scratch worktree")
+    debug.add_argument("description", nargs="?", help="bug report; or pass --issue")
+    debug.add_argument("--issue", type=int)
+    debug.add_argument("--issue-snapshot", type=Path)
+    debug.add_argument("--fixture", type=Path, required=True)
+    debug.add_argument("--target-repo", type=Path)
+    debug.add_argument("--fix", action="store_true", help="hand the failing test to the fast lane")
+    debug.add_argument("--config", type=Path)
+    debug.add_argument("--models", type=Path)
+    debug.add_argument("--budgets", type=Path)
+    debug.add_argument("--runs-dir", type=Path)
+    debug.add_argument("--db", type=Path)
 
     report = sub.add_parser("report", help="aggregate inline metrics from the local index")
     report.add_argument("--db", type=Path)
@@ -531,6 +547,55 @@ def _run_retro(
     print(f"retro: {result.status}")
     print(f"retro-proposals: {result.proposals}")
     print("retro-applied: false")
+
+
+def _debug(args: argparse.Namespace) -> int:
+    loaded = _load(args)
+    if isinstance(loaded, int):
+        return loaded
+    _models, pipeline, _caps, cap = loaded
+    if not stage_enabled(pipeline, "debug"):
+        print("debug: disabled by stages.debug.enabled")
+        return 0
+    description = args.description or ""
+    if args.issue is not None:
+        snapshot_path = args.issue_snapshot or Path("issues") / f"{args.issue}.json"
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        description = description or str(snapshot.get("title") or snapshot.get("body") or "")
+    if not description.strip():
+        print("debug needs a description or --issue", file=sys.stderr)
+        return 2
+    run_id = "run-" + uuid.uuid4().hex[:12]
+    runs_dir = args.runs_dir or Path("runs")
+    run_dir = runs_dir / run_id
+    stage_cap = int((pipeline.get("debug") or {}).get("budget_cents") or 50)
+    try:
+        result = execute_debug(
+            run_dir=run_dir,
+            run_id=run_id,
+            description=description,
+            fixture_path=args.fixture,
+            target_repo=args.target_repo,
+            spent_cents=0,
+            run_cap_cents=cap,
+            stage_cap_cents=stage_cap,
+            fix=bool(args.fix),
+        )
+    except DebugSkipped as exc:
+        print(f"debug: skipped ({exc})")
+        return 0
+    except BudgetHardStop as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except DebugError as exc:
+        print(str(exc), file=sys.stderr)
+        return exc.code
+    print(f"debug: {result.status}")
+    print(f"run-id: {run_id}")
+    print("push: none")
+    print("pr: none")
+    print((run_dir / "diagnosis.md").read_text(encoding="utf-8"))
+    return 0
 
 
 def _report(args: argparse.Namespace) -> int:

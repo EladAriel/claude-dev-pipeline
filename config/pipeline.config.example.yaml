@@ -45,6 +45,8 @@ stages:
     enabled: true
   fast:
     enabled: true
+  debug:
+    enabled: true
   spec:
     enabled: true
   plan:

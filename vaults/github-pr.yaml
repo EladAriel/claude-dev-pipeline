@@ -1,0 +1,5 @@
+display_name: vault-github-pr
+type: static_bearer
+credential: external
+server_url: https://api.githubcopilot.com/mcp/x/pull_requests
+tools: [create_pull_request]

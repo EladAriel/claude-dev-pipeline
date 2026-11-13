@@ -1,0 +1,22 @@
+# Session caps in cents, as decimal strings. The run cap is the hard stop.
+# There is no separate evaluation budget: metrics are recorded on the same run.
+caps_cents:
+  triage: "10"
+  spec: "300"
+  plan: "200"
+  implement: "300"
+  verify: "10"
+  simplify: "50"
+  risk: "5"
+  finder-bugs: "150"
+  finder-standards: "50"
+  finder-history: "5"
+  security: "50"
+  verifier: "60"
+  rank: "30"
+  fix-round: "150"
+  re-review: "75"
+  pr: "25"
+  retro: "75"
+  codex: "150"
+  run: "2000"

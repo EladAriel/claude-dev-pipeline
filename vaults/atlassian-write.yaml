@@ -1,0 +1,6 @@
+display_name: vault-atlassian-write
+type: static_bearer
+credential: external
+server_url: https://mcp.atlassian.com/v2/mcp
+scopes:
+  - write:jira

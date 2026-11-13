@@ -1,0 +1,7 @@
+# Declarative shape only. The scaffold does not publish this environment.
+name: sandbox-limited
+networking:
+  type: limited
+  allow_package_managers: true
+  allow_mcp_servers: true
+  allowed_hosts: []

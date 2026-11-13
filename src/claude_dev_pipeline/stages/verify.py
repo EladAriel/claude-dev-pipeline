@@ -265,6 +265,7 @@ def _finish(
             model=MODEL if model_called else "none",
             effort=effort,
             note="fixture" if model_called else "commands-only",
+            model_called=model_called,
             output_tokens=int(usage.get("output_tokens", 0)),
             input_tokens=int(usage.get("input_tokens", 0)),
             budget_cents=budget_cents,

@@ -25,6 +25,13 @@ class LedgerEntry:
     budget_cents: int = 0
     effort: str = ""
     ticket: str = ""
+    model_called: bool = True
+
+
+def _as_bool(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no"}
+    return bool(value)
 
 
 class LedgerError(Exception):
@@ -63,6 +70,7 @@ class Ledger:
                         budget_cents=int(payload.get("budget_cents", 0)),
                         effort=str(payload.get("effort", "")),
                         ticket=str(payload.get("ticket", "")),
+                        model_called=_as_bool(payload.get("model_called", True)),
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:

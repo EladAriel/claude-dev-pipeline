@@ -10,8 +10,13 @@ They are written to `metrics.json` and indexed in `runs/pipeline.db`.
 Haiku writes `retro.md` from a recorded fixture. Each item is a proposal.
 `applied` stays false. The stage does not edit the target repo.
 
-`pipeline report` reads the index and prints the cost trend and the share of
-implement rows that used `claude-haiku-5.5`, the cheapest model in the catalog.
+`pipeline report` reads the index and prints the cost trend. For each stage
+it also prints the share of model calls that used the cheapest model on that
+stage's allowlist in `config/models.yaml`. A stage with no `allowlist` uses
+its configured `model` as the only choice. Cheapest means the lowest input
+list price in `budget.py`, then the lowest output price. Rows with
+`model_called: false` are left out, including a green verify run. The overall
+share uses only stages whose allowlist has a known list price.
 
 ## Verify
 

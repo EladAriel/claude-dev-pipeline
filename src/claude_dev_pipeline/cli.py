@@ -143,6 +143,7 @@ def _parser() -> argparse.ArgumentParser:
 
     report = sub.add_parser("report", help="aggregate inline metrics from the local index")
     report.add_argument("--db", type=Path)
+    report.add_argument("--models", type=Path)
 
     status = sub.add_parser("status", help="print the latest local run")
     status.add_argument("--db", type=Path)
@@ -448,7 +449,9 @@ def _run_retro(
 
 
 def _report(args: argparse.Namespace) -> int:
-    payload = aggregate_report(args.db or Path("runs/pipeline.db"))
+    models_path = args.models or Path("config/models.yaml")
+    models = load_yaml(models_path) if models_path.exists() else {}
+    payload = aggregate_report(args.db or Path("runs/pipeline.db"), models)
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 

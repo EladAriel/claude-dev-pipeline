@@ -48,6 +48,20 @@ _PRICES = {
 }
 
 
+def cheapest_model(models: list[str] | tuple[str, ...]) -> str | None:
+    """Lowest input list price, then lowest output price. Unknown prices are skipped."""
+    ranked: list[tuple[Decimal, Decimal, str]] = []
+    for name in models:
+        prices = _PRICES.get(name)
+        if prices is None:
+            continue
+        ranked.append((prices.input, prices.output, name))
+    if not ranked:
+        return None
+    ranked.sort()
+    return ranked[0][2]
+
+
 def to_cents(amount: Decimal) -> int:
     """Round a USD amount to integer cents, half up."""
     return int((amount * Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))

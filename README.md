@@ -50,6 +50,8 @@ pipeline import plan.json
 
 `--no-push` writes `pr.json` and `pr-body.md` without pushing. Retro still
 runs and writes `metrics.json` and `retro.md`. Proposals are not applied.
+`pipeline report` prints the cost trend and, per stage, the share of model
+calls that used the cheapest model on that stage's allowlist.
 
 `--issue` runs only when the local snapshot shows that `EladAriel` applied
 `agent:approved`. The scaffold does not call GitHub to check that. `pipeline

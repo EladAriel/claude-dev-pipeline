@@ -102,6 +102,7 @@ def test_all_green_does_not_open_a_model_fixture(tmp_path):
     ledger = (run / "ledger.jsonl").read_text(encoding="utf-8")
     assert "commands-only" in ledger
     assert '"model": "none"' in ledger
+    assert '"model_called": false' in ledger
 
 
 def test_failing_command_uses_the_fixture_and_stops(tmp_path):

@@ -6,6 +6,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+from claude_dev_pipeline.budget import cheapest_model
+
 _MIGRATION = Path(__file__).with_name("migrations") / "001_initial.sql"
 _DELETE_ORDER = (
     "votes",
@@ -34,8 +36,20 @@ def init_db(path: Path) -> None:
             conn.executescript(_MIGRATION.read_text(encoding="utf-8"))
             conn.execute("PRAGMA user_version = 1")
             conn.commit()
+        _ensure_model_called(conn)
     finally:
         conn.close()
+
+
+def _ensure_model_called(conn: sqlite3.Connection) -> None:
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "stages" not in tables:
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(stages)")}
+    if "model_called" in columns:
+        return
+    conn.execute("ALTER TABLE stages ADD COLUMN model_called INTEGER NOT NULL DEFAULT 1")
+    conn.commit()
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -120,8 +134,9 @@ def _index_ledger_line(conn: sqlite3.Connection, row: dict) -> None:
     cursor = conn.execute(
         """
         INSERT INTO stages (
-          run_id, name, ticket, provider, model, effort, status, budget_cents, gate_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          run_id, name, ticket, provider, model, effort, status, budget_cents, gate_message,
+          model_called
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             row["run_id"],
@@ -133,6 +148,7 @@ def _index_ledger_line(conn: sqlite3.Connection, row: dict) -> None:
             row.get("status") or "recorded",
             int(row["budget_cents"]) if row.get("budget_cents") else int(row["amount_cents"]),
             row.get("gate_message") or row.get("note"),
+            1 if _called(row.get("model_called", True)) else 0,
         ),
     )
     amount = int(row["amount_cents"])
@@ -156,10 +172,16 @@ def _index_ledger_line(conn: sqlite3.Connection, row: dict) -> None:
     )
 
 
-def aggregate_report(db_path: Path) -> dict:
-    """Cost trend and the share of implement rows that used the cheapest model."""
+def aggregate_report(db_path: Path, models: dict | None = None) -> dict:
+    """Cost trend and the share of calls that used each stage's cheapest allowlisted model."""
+    empty = {
+        "by_stage": {},
+        "calls": 0,
+        "hits": 0,
+        "share": None,
+    }
     if not db_path.exists():
-        return {"cost_trend": [], "cheapest_capable_model_hit_rate": None, "runs": 0}
+        return {"cheapest_model": empty, "cost_trend": [], "runs": 0}
     conn = connect(db_path)
     try:
         trend = [
@@ -172,18 +194,63 @@ def aggregate_report(db_path: Path) -> dict:
                 """
             )
         ]
-        rows = conn.execute(
-            "SELECT model FROM stages WHERE name = 'implement' AND model != ''"
-        ).fetchall()
+        stage_rows = conn.execute("SELECT name, model, model_called FROM stages").fetchall()
     finally:
         conn.close()
-    hits = sum(1 for row in rows if str(row["model"]) == "claude-haiku-5.5")
-    rate = (hits / len(rows)) if rows else None
     return {
-        "cheapest_capable_model_hit_rate": rate,
+        "cheapest_model": _cheapest_shares(stage_rows, models or {}),
         "cost_trend": trend,
         "runs": len(trend),
     }
+
+
+def _cheapest_shares(rows: list, models: dict) -> dict:
+    seen: dict[str, list[tuple[str, bool]]] = {}
+    for row in rows:
+        stage = str(row["name"] or "")
+        seen.setdefault(stage, []).append((str(row["model"] or ""), bool(row["model_called"])))
+    by_stage: dict[str, dict] = {}
+    total_calls = 0
+    total_hits = 0
+    for stage in sorted(seen):
+        allow = _allowlist(models, stage)
+        cheapest = cheapest_model(allow)
+        calls = [model for model, called in seen[stage] if called]
+        hits = sum(1 for model in calls if cheapest is not None and model == cheapest)
+        share = (hits / len(calls)) if calls and cheapest is not None else None
+        by_stage[stage] = {
+            "allowlist": allow,
+            "calls": len(calls),
+            "cheapest": cheapest,
+            "hits": hits if cheapest is not None else 0,
+            "share": share,
+        }
+        if cheapest is not None:
+            total_calls += len(calls)
+            total_hits += hits
+    return {
+        "by_stage": by_stage,
+        "calls": total_calls,
+        "hits": total_hits,
+        "share": (total_hits / total_calls) if total_calls else None,
+    }
+
+
+def _allowlist(models: dict, stage: str) -> list[str]:
+    spec = models.get(stage)
+    if not isinstance(spec, dict):
+        return []
+    raw = spec.get("allowlist")
+    if isinstance(raw, list) and raw:
+        return [str(item) for item in raw if str(item).strip()]
+    model = str(spec.get("model") or "").strip()
+    return [model] if model else []
+
+
+def _called(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no"}
+    return bool(value)
 
 
 def latest_run(db_path: Path) -> dict | None:

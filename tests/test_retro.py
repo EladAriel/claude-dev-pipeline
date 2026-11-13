@@ -163,63 +163,122 @@ def test_budget_halt_still_records_retro(tmp_path, repo_root, capsys):
     assert "stop-reason: budget-halt" in capsys.readouterr().out
 
 
-def test_report_aggregates_cost_and_the_cheapest_model(tmp_path):
+def _ledger(run_id: str, stage: str, model: str, amount: int, *, called: bool = True) -> dict:
+    return {
+        "amount_cents": amount,
+        "budget_cents": amount,
+        "model": model,
+        "model_called": called,
+        "provider": "anthropic",
+        "run_id": run_id,
+        "stage": stage,
+    }
+
+
+def _index_run(runs, db, run_id: str, started: str, lines: list[dict], cost: int) -> None:
+    run = runs / run_id
+    run.mkdir(parents=True)
+    (run / "ledger.jsonl").write_text(
+        "".join(json.dumps(line) + "\n" for line in lines),
+        encoding="utf-8",
+    )
+    (run / "metrics.json").write_text(
+        json.dumps(
+            {
+                "success": True,
+                "first_try_success": True,
+                "loops": 1,
+                "cost_usd": cost / 100,
+                "wall_seconds": 0,
+                "trajectory_violations": 0,
+                "hidden_failure": False,
+                "owner_interventions": 0,
+                "rounds_to_pass": 1,
+                "recorded_at": "2026-11-13T00:00:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_run_artifact(
+        runs,
+        db,
+        {
+            "run_id": run_id,
+            "started_at": started,
+            "status": "succeeded",
+            "intake_kind": "task",
+            "intake_ref": run_id,
+        },
+    )
+
+
+def test_report_uses_each_stage_allowlist_and_skips_idle_models(tmp_path, capsys):
     runs = tmp_path / "runs"
     db = tmp_path / "pipeline.db"
-    for run_id, model, cost in (
-        ("run-a", "claude-haiku-5.5", 10),
-        ("run-b", "claude-sonnet-5.5", 40),
-    ):
-        run = runs / run_id
-        run.mkdir(parents=True)
-        (run / "ledger.jsonl").write_text(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "stage": "implement",
-                    "amount_cents": cost,
-                    "provider": "anthropic",
-                    "model": model,
-                    "budget_cents": cost,
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        (run / "metrics.json").write_text(
-            json.dumps(
-                {
-                    "success": True,
-                    "first_try_success": True,
-                    "loops": 1,
-                    "cost_usd": cost / 100,
-                    "wall_seconds": 0,
-                    "trajectory_violations": 0,
-                    "hidden_failure": False,
-                    "owner_interventions": 0,
-                    "rounds_to_pass": 1,
-                    "recorded_at": "2026-11-13T00:00:00+00:00",
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        write_run_artifact(
-            runs,
-            db,
-            {
-                "run_id": run_id,
-                "started_at": f"2026-11-13T00:00:0{cost}+00:00",
-                "status": "succeeded",
-                "intake_kind": "task",
-                "intake_ref": run_id,
-            },
-        )
-    report = aggregate_report(db)
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        "\n".join(
+            [
+                "implement:",
+                "  model: claude-sonnet-5.5",
+                "  allowlist:",
+                "    - claude-sonnet-5.5",
+                "    - claude-opus-5.5",
+                "triage:",
+                "  model: claude-haiku-5.5",
+                "verify:",
+                "  model: claude-haiku-5.5",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _index_run(
+        runs,
+        db,
+        "run-a",
+        "2026-11-13T00:00:01+00:00",
+        [
+            _ledger("run-a", "implement", "claude-sonnet-5.5", 10),
+            _ledger("run-a", "verify", "none", 0, called=False),
+        ],
+        10,
+    )
+    _index_run(
+        runs,
+        db,
+        "run-b",
+        "2026-11-13T00:00:02+00:00",
+        [
+            _ledger("run-b", "implement", "claude-opus-5.5", 40),
+            _ledger("run-b", "triage", "claude-haiku-5.5", 1),
+        ],
+        41,
+    )
+    loaded = {
+        "implement": {
+            "model": "claude-sonnet-5.5",
+            "allowlist": ["claude-sonnet-5.5", "claude-opus-5.5"],
+        },
+        "triage": {"model": "claude-haiku-5.5"},
+        "verify": {"model": "claude-haiku-5.5"},
+    }
+    report = aggregate_report(db, loaded)
+    cheapest = report["cheapest_model"]
     assert [item["run_id"] for item in report["cost_trend"]] == ["run-a", "run-b"]
-    assert report["cheapest_capable_model_hit_rate"] == 0.5
-    code = main(["report", "--db", str(db)])
+    assert cheapest["by_stage"]["implement"]["cheapest"] == "claude-sonnet-5.5"
+    assert cheapest["by_stage"]["implement"]["share"] == 0.5
+    assert cheapest["by_stage"]["triage"]["share"] == 1
+    assert cheapest["by_stage"]["verify"]["calls"] == 0
+    assert cheapest["by_stage"]["verify"]["share"] is None
+    assert cheapest["calls"] == 3
+    assert cheapest["hits"] == 2
+    assert cheapest["share"] == 2 / 3
+    code = main(["report", "--db", str(db), "--models", str(models)])
     assert code == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["cheapest_model"]["by_stage"]["implement"]["share"] == 0.5
     saved = connect(db)
     count = saved.execute("SELECT COUNT(*) FROM run_metrics").fetchone()[0]
     assert count == 2

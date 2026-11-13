@@ -37,7 +37,8 @@ CREATE TABLE stages (
   stop_reason TEXT,
   gate_message TEXT,
   artifact_sha256 TEXT,
-  budget_cents INTEGER
+  budget_cents INTEGER,
+  model_called INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE usage (

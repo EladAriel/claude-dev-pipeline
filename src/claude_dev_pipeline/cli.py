@@ -41,6 +41,7 @@ from claude_dev_pipeline.stages.implement import (
     fanout_lines,
 )
 from claude_dev_pipeline.stages.plan import PlanError, PlanSkipped, execute_plan
+from claude_dev_pipeline.stages.pr import PrBlocked, PrError, PrSkipped, execute_pr
 from claude_dev_pipeline.stages.review import ReviewError, ReviewSkipped, execute_review
 from claude_dev_pipeline.stages.spec import SpecError, SpecSkipped, execute_spec
 from claude_dev_pipeline.stages.triage import TriageError, execute_triage
@@ -118,6 +119,11 @@ def _parser() -> argparse.ArgumentParser:
         "--review-fixture",
         type=Path,
         help="recorded finder and vote rounds; Codex stays a local subprocess",
+    )
+    run.add_argument(
+        "--no-push",
+        action="store_true",
+        help="render pr.json and pr-body.md without pushing or calling MCP",
     )
     run.add_argument("--target-repo", type=Path)
 
@@ -306,6 +312,23 @@ def _run(args: argparse.Namespace) -> int:
                     elif review_status == "succeeded":
                         mode = "review-pass"
                         triage_status = "succeeded"
+                        pr_status = _run_pr(
+                            args,
+                            run_dir=run_dir,
+                            run_id=run_id,
+                            models=models,
+                            pipeline=pipeline,
+                            caps=caps,
+                            cap=cap,
+                        )
+                        if pr_status == "blocked":
+                            mode = "pr-blocked"
+                            triage_status = "blocked"
+                            exit_code = 1
+                        elif pr_status == "rendered":
+                            mode = "pr-rendered"
+                        elif pr_status == "draft":
+                            mode = "pr-draft"
     print("claude-dev-pipeline scaffold")
     print(f"mode: {mode}")
     print("api-calls: none")
@@ -594,6 +617,79 @@ def _run_review(
     return "succeeded"
 
 
+def _run_pr(
+    args: argparse.Namespace,
+    *,
+    run_dir: Path,
+    run_id: str,
+    models: dict,
+    pipeline: dict,
+    caps: dict[str, int],
+    cap: int,
+) -> str | None:
+    if not stage_enabled(pipeline, "pr"):
+        print("pr: disabled by stages.pr.enabled")
+        return "skipped"
+    if getattr(args, "target_repo", None) is None:
+        print("pr: skipped (no target repo)")
+        return "skipped"
+    plan_path = run_dir / "plan.json"
+    branches: list[str] = []
+    if plan_path.is_file():
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        branches = [f"agent/{run_id}-{task['id']}" for task in plan.get("tasks") or []]
+    issue_number = getattr(args, "issue", None)
+    push = not getattr(args, "no_push", False)
+    model = str((models.get("pr") or {}).get("model") or "claude-haiku-5.5")
+    effort = str((models.get("pr") or {}).get("effort") or "low")
+    try:
+        result = execute_pr(
+            run_dir=run_dir,
+            run_id=run_id,
+            target_repo=args.target_repo,
+            base="main",
+            ticket_branches=branches,
+            spent_cents=_spent_cents(run_dir),
+            run_cap_cents=cap,
+            stage_cap_cents=caps["pr"],
+            push=push,
+            mcp=_RecordingMcp(run_dir / "pr-mcp.json") if push else None,
+            model=model,
+            effort=effort,
+            issue_number=issue_number,
+        )
+    except PrSkipped as exc:
+        print(f"pr: skipped ({exc})")
+        return "skipped"
+    except PrBlocked as exc:
+        print(f"pr: blocked ({exc})", file=sys.stderr)
+        return "blocked"
+    except (BudgetHardStop, PrError) as exc:
+        print(str(exc), file=sys.stderr)
+        return "blocked"
+    print(f"pr: {result.status}")
+    print(f"pr-pushed: {str(result.pushed).lower()}")
+    return result.status
+
+
+class _RecordingMcp:
+    """Offline stand-in. It records the tool call and does not open a socket."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.calls: list[dict] = []
+
+    def call(self, tool: str, payload: dict) -> dict:
+        self.calls.append({"tool": tool, "payload": payload})
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(
+            json.dumps(self.calls, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        if tool == "create_pull_request":
+            return {"url": "local://draft"}
+        return {"ok": True}
+
+
 def _implement_cfg(models: dict, pipeline: dict) -> dict:
     cfg = dict(models.get("implement") or {})
     override = (pipeline.get("models") or {}).get("implement") or {}
@@ -749,6 +845,7 @@ def _dry_run(args: argparse.Namespace) -> int:
         "review: Quick/Standard/Deep from triage and diff; "
         "finders bug-hunt, simplify, end-to-end; codex read-only; max 3 rounds"
     )
+    print("pr: draft only; create_pull_request; no merge; --no-push renders locally")
     return 0
 
 

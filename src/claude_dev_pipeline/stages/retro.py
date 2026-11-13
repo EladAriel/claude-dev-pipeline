@@ -9,6 +9,7 @@ from pathlib import Path
 
 from claude_dev_pipeline.budget import BudgetHardStop, authorize_session_cents
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
+from claude_dev_pipeline.reconcile import agreement_rate, threshold_proposals
 
 MODEL = "claude-haiku-5.5"
 
@@ -58,6 +59,7 @@ def execute_retro(
         usage = payload.get("usage") or {}
         if not isinstance(usage, dict):
             raise RetroError("retro usage must be an object")
+    proposals.extend(threshold_proposals(run_dir))
     amount = int(usage.get("amount_cents") or 0)
     metrics = compute_metrics(run_dir, caps, stop_reason)
     charged = _book_if_it_fits(
@@ -131,6 +133,7 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
         "clarity_score": clarity.get("score"),
         "clarity_halted": bool(clarity.get("halted")),
         "review_survivors_by_family": survivors,
+        "agreement_rate": agreement_rate(run_dir),
         "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
     }
 

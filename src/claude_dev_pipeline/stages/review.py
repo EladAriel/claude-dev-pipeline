@@ -10,6 +10,8 @@ from pathlib import Path
 
 from claude_dev_pipeline.budget import BudgetHardStop, authorize_session_cents
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
+from claude_dev_pipeline.reconcile import apply_round, persist
+from claude_dev_pipeline.reconcile import enabled as reconcile_enabled
 
 DEPTHS = ("Quick", "Standard", "Deep")
 CHECKS = ("bug-hunt", "simplify", "end-to-end", "security")
@@ -98,6 +100,8 @@ def execute_review(
     cross_model = False
     claude_cost = 0
     codex_cost = 0
+    tie_rows: list[dict] = []
+    tie_cents = 0
     codex_tokens: dict[str, int | None] = {"input_tokens": None, "output_tokens": None}
     schema_path = schema or _default_schema()
     for index, round_data in enumerate(rounds[:max_rounds], start=1):
@@ -120,6 +124,15 @@ def execute_review(
         for vote in list(round_data.get("codex_votes") or []) + codex_votes:
             votes.setdefault(str(vote.get("finding_id")), []).append(vote)
         scored = [_score(item, votes.get(item["id"], []), cross_model) for item in findings]
+        if reconcile_enabled(config):
+            scored, rows, cents = apply_round(
+                scored,
+                votes,
+                round_data.get("tie_break") or {},
+                config,
+            )
+            tie_rows.extend(rows)
+            tie_cents += cents
         scored_all.extend(scored)
         new_kept = _cap_nits([item for item in scored if item["kept"]], max_nits)
         kept.extend(new_kept)
@@ -143,6 +156,18 @@ def execute_review(
         run_cap_cents,
         spent_cents,
     )
+    if tie_cents:
+        _book(
+            run_dir,
+            run_id,
+            "tie-break",
+            tie_cents,
+            "claude-haiku-5.5",
+            "low",
+            review_cap_cents,
+            run_cap_cents,
+            spent_cents + claude_cost + codex_cost,
+        )
     if cross_model:
         _book(
             run_dir,
@@ -171,7 +196,11 @@ def execute_review(
         "codex_tokens": codex_tokens,
         "summary": _summary(kept, security_block),
     }
+    disputed = [item for item in scored_all if item.get("disputed")]
+    if disputed:
+        result["summary"] += f" {len(disputed)} disputed."
     run_dir.mkdir(parents=True, exist_ok=True)
+    persist(run_dir, run_id, tie_rows)
     (run_dir / "review.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

@@ -21,6 +21,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Flaky tests | A failing test is retried, compared with the base commit, and a pre-existing flake is quarantined | `stages.flaky.enabled: false`, then `git revert` the flaky-tests commit |
 | Simplify | Checks stay green, or the simplify commit is dropped | Drop that commit |
 | Review | Offline fixtures and a fake codex: 2-of-3 cross-family vote, security block, round cap, missing codex | `stages.review.enabled: false` and `reviewers.codex.enabled: false`, then `git revert` the review commit |
+| Reconciliation | A high-confidence Claude/Codex split gets one cheap tie-break or is marked disputed | `stages.reconcile.enabled: false`, then `git revert` the reconcile commit |
 | PR | Offline temp repo and fake MCP: a blocking review opens nothing; merge is denied; an unapproved issue is untouched | `stages.pr.enabled: false`, then `git revert` the PR commit |
 | PR | Draft only; the only GitHub MCP tool is `create_pull_request` | Close the draft and disable the stage |
 | Retro | Offline metrics plus a fixture: proposals stay unapplied, and a budget halt still writes them | `stages.retro.enabled: false`, then `git revert` the retro commit |

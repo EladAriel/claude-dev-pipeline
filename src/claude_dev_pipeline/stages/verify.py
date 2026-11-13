@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from claude_dev_pipeline.budget import BudgetHardStop, authorize_session_cents
+from claude_dev_pipeline.harness import discover
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
 
 PROVIDER = "anthropic"
@@ -52,6 +53,24 @@ def execute_verify(
     tickets = [_verify_ticket(item, config, timeout) for item in done]
     coverage_gaps = _coverage_gaps(spec, plan, tickets)
     commands_failed = [item for item in tickets if not item["passed"]]
+    test_ran = any(item.get("name") == "test" for ticket in tickets for item in ticket["commands"])
+    gate = (config.get("stages") or {}).get("verification") or {}
+    gate_on = gate.get("enabled", True) is not False
+    if gate_on and not commands_failed and not coverage_gaps and not test_ran:
+        _finish(
+            run_dir,
+            run_id,
+            tickets,
+            status="unverified",
+            model_called=False,
+            amount_cents=0,
+            effort="",
+            budget_cents=0,
+            run_cap_cents=run_cap_cents,
+            usage={},
+            verification="unverified",
+        )
+        return VerifyResult(status="unverified", model_called=False, amount_cents=0)
     if not commands_failed and not coverage_gaps:
         _finish(
             run_dir,
@@ -109,7 +128,7 @@ def _verify_ticket(report: dict, config: dict, timeout: float) -> dict:
         raise VerifyError(f"worktree missing for ticket {report.get('ticket')}")
     commands = []
     passed = True
-    for name, command in _commands(config):
+    for name, command in _commands(config, worktree):
         outcome = _run_command(command, worktree, timeout)
         commands.append({"name": name, "command": command, **outcome})
         if outcome["exit_code"] != 0 or outcome["timed_out"]:
@@ -125,13 +144,17 @@ def _verify_ticket(report: dict, config: dict, timeout: float) -> dict:
     }
 
 
-def _commands(config: dict) -> list[tuple[str, str]]:
+def _commands(config: dict, worktree: Path) -> list[tuple[str, str]]:
     checks = config.get("checks") or {}
     found = []
     for name in CHECK_NAMES:
         command = str(checks.get(name) or "").strip()
         if command:
             found.append((name, command))
+    if not any(name == "test" for name, _command in found):
+        detected = discover(worktree, {"checks": {}})
+        if detected.get("command"):
+            found.append(("test", str(detected["command"])))
     return found
 
 
@@ -245,9 +268,11 @@ def _finish(
     run_cap_cents: int,
     usage: dict,
     coverage_gaps: list[str] | None = None,
+    verification: str = "tested",
 ) -> None:
     payload = {
         "status": status,
+        "verification": verification,
         "model_called": model_called,
         "coverage_gaps": coverage_gaps or [],
         "tickets": tickets,

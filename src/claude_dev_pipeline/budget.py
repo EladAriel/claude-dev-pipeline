@@ -62,6 +62,15 @@ def cheapest_model(models: list[str] | tuple[str, ...]) -> str | None:
     return ranked[0][2]
 
 
+def max_output_tokens(model: str, remaining_cents: int) -> int:
+    """How many output tokens the remaining cents can buy at list price."""
+    prices = _PRICES.get(model)
+    if prices is None or remaining_cents <= 0 or prices.output <= 0:
+        return 0
+    usd = Decimal(remaining_cents) / Decimal(100)
+    return int(usd / prices.output * Decimal(1_000_000))
+
+
 def to_cents(amount: Decimal) -> int:
     """Round a USD amount to integer cents, half up."""
     return int((amount * Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))

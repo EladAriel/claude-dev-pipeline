@@ -43,6 +43,8 @@ stages:
     enabled: true
   tiers:
     enabled: true
+  budget_policy:
+    enabled: true
   fast:
     enabled: true
   debug:

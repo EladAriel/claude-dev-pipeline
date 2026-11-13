@@ -53,6 +53,8 @@ def _ensure_model_called(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE run_metrics ADD COLUMN tier TEXT")
     if "escalated" not in metric_cols:
         conn.execute("ALTER TABLE run_metrics ADD COLUMN escalated INTEGER")
+    if "halt_reason" not in metric_cols:
+        conn.execute("ALTER TABLE run_metrics ADD COLUMN halt_reason TEXT")
     conn.commit()
 
 
@@ -290,8 +292,8 @@ def _index_metrics(conn: sqlite3.Connection, run_id: str, metrics: dict) -> None
         INSERT INTO run_metrics (
           run_id, success, first_try_success, loops, cost_usd, wall_seconds,
           trajectory_violations, hidden_failure, owner_interventions, rounds_to_pass,
-          recorded_at, tier, escalated
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          recorded_at, tier, escalated, halt_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -307,6 +309,7 @@ def _index_metrics(conn: sqlite3.Connection, run_id: str, metrics: dict) -> None
             metrics.get("recorded_at"),
             metrics.get("tier"),
             1 if metrics.get("escalated") else 0,
+            metrics.get("halt_reason") or "",
         ),
     )
 

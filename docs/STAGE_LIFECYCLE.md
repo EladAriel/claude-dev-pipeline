@@ -10,6 +10,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Tiers | Offline fixtures: S/M/L/XL set the lane, review depth, and budget; XL stops without `--approve-xl` | `stages.tiers.enabled: false`, then `git revert` the tiers commit |
 | Fast lane | Tier S skips spec and plan; a large diff or a second verify failure escalates | `stages.fast.enabled: false`, then `git revert` the fast-lane commit |
 | Debug | Offline fixture: diagnosis stays in a scratch worktree and does not push | `stages.debug.enabled: false`, then `git revert` the debug commit |
+| Summary | The template is printed last; an unapproved issue gets no status comment | `stages.summary.enabled: false`, then `git revert` the summary commit |
 | Spec | Offline fixtures: `spec.json` has acceptance ids, seams, and e2e scenarios; a rejected triage writes none | `stages.spec.enabled: false`, then `git revert` the spec commit |
 | Plan | Offline fixtures: `plan.json` is an ordered DAG and covers every spec acceptance id; a spec that needs a human writes none | `stages.plan.enabled: false`, then `git revert` the plan commit |
 | Implement | Offline fixtures in a temp git repo: one local commit per done ticket; a blocked ticket stops the run; the diff is scanned | `stages.implement.enabled: false`, then `git revert` the implement commit |

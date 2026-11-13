@@ -63,6 +63,7 @@ from claude_dev_pipeline.stages.review import ReviewError, ReviewSkipped, execut
 from claude_dev_pipeline.stages.spec import SpecError, SpecSkipped, execute_spec
 from claude_dev_pipeline.stages.triage import TriageError, execute_triage
 from claude_dev_pipeline.stages.verify import VerifyError, execute_verify
+from claude_dev_pipeline.summary import write_summary
 from claude_dev_pipeline.tiers import TierApprovalRequired, apply_routing_models, load_tiers
 
 
@@ -154,6 +155,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--target-repo", type=Path)
     run.add_argument("--tiers", type=Path)
+    run.add_argument(
+        "--summary-fixture",
+        type=Path,
+        help="recorded Haiku narrative paragraph; a missing fixture uses the template",
+    )
     run.add_argument(
         "--approve-xl",
         action="store_true",
@@ -293,8 +299,13 @@ def _run(args: argparse.Namespace) -> int:
             "intake_ref": intake.ref,
             "pr_url": None,
         }
+        summary = ""
+        if stage_enabled(pipeline, "summary"):
+            summary = _emit_summary(args, run_dir, run_id, intake.ref, reason, cap)
         write_run_artifact(runs_dir, db_path, payload)
         print(f"recorded: {db_path}")
+        if summary:
+            print(summary, end="")
         return code
 
     if args.model_fixture is not None and not args.dry_run:
@@ -482,6 +493,39 @@ def _run(args: argparse.Namespace) -> int:
     return _finish(exit_code, stop_reason)
 
 
+def _emit_summary(args, run_dir: Path, run_id: str, asked: str, reason: str, cap: int) -> str:
+    narrative = None
+    cents = 0
+    stages = {}
+    fixture = getattr(args, "summary_fixture", None)
+    if fixture is not None and Path(fixture).is_file():
+        payload = json.loads(Path(fixture).read_text(encoding="utf-8"))
+        narrative = str(payload.get("narrative") or "")
+        cents = int((payload.get("usage") or {}).get("amount_cents") or 0)
+    config_path = getattr(args, "config", None)
+    if config_path is not None and Path(config_path).is_file():
+        loaded = load_yaml(Path(config_path))
+        stages = loaded.get("stages") or {}
+    summary_cfg = stages.get("summary") or {}
+    if isinstance(summary_cfg, dict) and summary_cfg.get("narrative") is False:
+        narrative = None
+        cents = 0
+    snapshot = None
+    issue_snapshot = getattr(args, "issue_snapshot", None)
+    if issue_snapshot is not None and Path(issue_snapshot).is_file():
+        snapshot = json.loads(Path(issue_snapshot).read_text(encoding="utf-8"))
+    return write_summary(
+        run_dir,
+        asked=asked,
+        stop_reason=reason,
+        narrative=narrative,
+        narrative_cents=cents,
+        snapshot=snapshot,
+        run_id=run_id,
+        run_cap_cents=cap,
+    )
+
+
 def _fast_plan(run_dir: Path) -> dict:
     path = run_dir / "fast.json"
     if not path.is_file():
@@ -594,7 +638,22 @@ def _debug(args: argparse.Namespace) -> int:
     print(f"run-id: {run_id}")
     print("push: none")
     print("pr: none")
-    print((run_dir / "diagnosis.md").read_text(encoding="utf-8"))
+    print((run_dir / "diagnosis.md").read_text(encoding="utf-8"), end="")
+    if stage_enabled(pipeline, "summary"):
+        snapshot = None
+        if args.issue_snapshot is not None and args.issue_snapshot.is_file():
+            snapshot = json.loads(args.issue_snapshot.read_text(encoding="utf-8"))
+        print(
+            write_summary(
+                run_dir,
+                asked=description,
+                stop_reason="diagnosed" if result.status == "diagnosed" else "handoff",
+                snapshot=snapshot,
+                run_id=run_id,
+                run_cap_cents=cap,
+            ),
+            end="",
+        )
     return 0
 
 

@@ -113,7 +113,7 @@ STAGES: tuple[Stage, ...] = (
         "plan",
         ("to-tickets",),
         verify="the plan artifact is a valid ticket DAG",
-        rollback=_REVERT,
+        rollback="stages.plan.enabled false, then git revert the plan commit",
     ),
     _stage(
         "3",

@@ -57,6 +57,9 @@ def write_summary(
         "## Needed from you",
         _needed(stop_reason, pr),
     ]
+    halt = _read(run_dir / "halt.json")
+    if halt:
+        lines.extend(["", "## Budget", _budget_note(halt)])
     if diagnosis.is_file():
         lines.extend(["", "## Diagnosis", "See `diagnosis.md` in this run."])
     text = "\n".join(lines) + "\n"
@@ -120,6 +123,19 @@ def _needed(stop_reason: str, pr: dict) -> str:
     if stop_reason in {"budget-halt", "tier-xl", "stop", "escalated"}:
         return "Decide whether to approve the next step or change the approach."
     return "Nothing else is required unless you want a follow-up."
+
+
+def _budget_note(halt: dict) -> str:
+    done = ", ".join(halt.get("completed_stages") or []) or "nothing"
+    left = ", ".join(halt.get("remaining_stages") or []) or "nothing"
+    needed = int(halt.get("needed_cents") or 0) / 100
+    reason = halt.get("halt_reason") or "budget"
+    return (
+        f"Halted before {halt.get('stopped_before') or 'the next stage'} ({reason}). "
+        f"Done: {done}. Left: {left}. "
+        f"About ${needed:.2f} more would be needed to finish. Worktrees were kept. "
+        "Nothing was pushed."
+    )
 
 
 def _fallback(stop_reason: str, metrics: dict) -> str:

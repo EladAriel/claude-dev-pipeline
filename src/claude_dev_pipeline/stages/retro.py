@@ -95,6 +95,7 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
     verify = _read(run_dir / "verify.json")
     triage = _read(run_dir / "triage.json")
     routing = triage.get("routing") if isinstance(triage.get("routing"), dict) else {}
+    halt = _read(run_dir / "halt.json")
     survivors: dict[str, int] = {}
     for finding in review.get("findings") or []:
         if finding.get("survived"):
@@ -119,6 +120,8 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
         "rounds_to_pass": int(review.get("rounds_run") or 0),
         "verify_pass": verify_pass,
         "stop_reason": stop_reason,
+        "halt_reason": halt.get("halt_reason") or "",
+        "needed_cents": int(halt.get("needed_cents") or 0),
         "tier": routing.get("tier") or triage.get("tier"),
         "lane": routing.get("lane"),
         "escalated": bool(routing.get("escalated")),

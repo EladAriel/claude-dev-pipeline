@@ -47,6 +47,13 @@ from claude_dev_pipeline.lanes import (
     write_synthesized,
 )
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
+from claude_dev_pipeline.overrun import (
+    downgrade_models,
+    load_policy,
+    project_stage,
+    quoted_usage,
+    write_halt,
+)
 from claude_dev_pipeline.plan import STAGES, Stage, require_gates
 from claude_dev_pipeline.scan import load_allowlist, scan_tree
 from claude_dev_pipeline.stages.debug import DebugError, DebugSkipped, execute_debug
@@ -155,6 +162,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--target-repo", type=Path)
     run.add_argument("--tiers", type=Path)
+    run.add_argument("--budget-policy", type=Path)
     run.add_argument(
         "--summary-fixture",
         type=Path,
@@ -363,6 +371,31 @@ def _run(args: argparse.Namespace) -> int:
                 models = apply_routing_models(models, routing)
                 print(f"tier: {routing.get('tier')} lane={routing.get('lane')}")
             on_fast = fast_lane(pipeline, routing) and result.decision == "route"
+            downgraded = False
+
+            def _gate(stage: str, fixture: Path | None) -> str | None:
+                nonlocal models, downgraded
+                decision = _project(
+                    args, pipeline, models, stage, fixture, _spent_cents(run_dir), work_cap
+                )
+                if decision is None or decision.action == "proceed":
+                    return None
+                if decision.action == "downgrade":
+                    if not downgraded:
+                        models = downgrade_models(models)["models"]
+                        downgraded = True
+                        print("budget: downgraded remaining stages; security block stays")
+                    return None
+                write_halt(
+                    run_dir,
+                    run_id=run_id,
+                    stage=stage,
+                    projection=decision,
+                    spent_cents=_spent_cents(run_dir),
+                )
+                print(f"budget: halt before {stage} ({decision.reason})")
+                return "halt"
+
             spec_status = None
             plan_status = None
             if on_fast:
@@ -371,6 +404,8 @@ def _run(args: argparse.Namespace) -> int:
                 print("fast-lane: skipped spec and plan")
                 mode = "fast-lane"
             else:
+                if _gate("spec", getattr(args, "spec_fixture", None)) == "halt":
+                    return _finish(1, "budget-halt")
                 spec_status = _run_spec(
                     args,
                     run_dir=run_dir,
@@ -386,6 +421,8 @@ def _run(args: argparse.Namespace) -> int:
                 if spec_status == "succeeded":
                     mode = "spec-fixture"
                     triage_status = "succeeded"
+                if _gate("plan", getattr(args, "plan_fixture", None)) == "halt":
+                    return _finish(1, "budget-halt")
                 plan_status = _run_plan(
                     args,
                     run_dir=run_dir,
@@ -400,6 +437,8 @@ def _run(args: argparse.Namespace) -> int:
                 if plan_status == "succeeded":
                     mode = "plan-fixture"
                     triage_status = "succeeded"
+            if _gate("implement", getattr(args, "implement_fixture", None)) == "halt":
+                return _finish(1, "budget-halt")
             impl_status = _run_implement(
                 args,
                 run_dir=run_dir,
@@ -426,6 +465,8 @@ def _run(args: argparse.Namespace) -> int:
                         mark_escalated(run_dir, bigger, "diff")
                         on_fast = False
                         print(f"fast-lane: escalated to {bigger}")
+                if _gate("verify", getattr(args, "verify_fixture", None)) == "halt":
+                    return _finish(1, "budget-halt")
                 verify_limit = limits_for(pipeline)["max_verify_failures"] if on_fast else 1
                 failures = 0
                 verify_status = None
@@ -455,6 +496,8 @@ def _run(args: argparse.Namespace) -> int:
                     triage_status = "succeeded"
                     if on_fast and not (run_dir / "fast.json").is_file():
                         write_fast_review(run_dir, pipeline)
+                    if _gate("review", getattr(args, "review_fixture", None)) == "halt":
+                        return _finish(1, "budget-halt")
                     review_status = _run_review(
                         args,
                         run_dir=run_dir,
@@ -472,6 +515,8 @@ def _run(args: argparse.Namespace) -> int:
                     elif review_status == "succeeded":
                         mode = "review-pass"
                         triage_status = "succeeded"
+                        if _gate("pr", None) == "halt":
+                            return _finish(1, "budget-halt")
                         pr_status = _run_pr(
                             args,
                             run_dir=run_dir,
@@ -532,6 +577,30 @@ def _fast_plan(run_dir: Path) -> dict:
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
     return data if isinstance(data, dict) else {}
+
+
+def _project(args, pipeline, models, stage, fixture, spent, cap):
+    if not stage_enabled(pipeline, "budget_policy"):
+        return None
+    path = getattr(args, "budget_policy", None) or Path("config/budget_policy.yaml")
+    policy = load_policy(path)
+    if not policy.get("enabled", True):
+        return None
+    estimates = policy.get("estimates_cents") or {}
+    quoted, tokens = quoted_usage(fixture)
+    model = str((models.get(stage) or {}).get("model") or "claude-haiku-5.5")
+    return project_stage(
+        stage=stage,
+        spent_cents=spent,
+        run_cap_cents=cap,
+        tier_cap_cents=cap,
+        estimate_cents=int(estimates.get(stage) or 0),
+        quoted_cents=quoted,
+        quoted_output_tokens=tokens,
+        soft_ratio=float(policy.get("soft_ratio") or 0.8),
+        model=model,
+        estimates={str(key): int(value) for key, value in estimates.items()},
+    )
 
 
 def _tiers(args: argparse.Namespace, pipeline: dict) -> dict | None:

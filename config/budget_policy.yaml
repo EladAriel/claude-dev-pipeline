@@ -1,0 +1,14 @@
+# Project the next stage before it starts. Caps stay inside the run and tier caps.
+enabled: true
+soft_ratio: 0.8
+estimates_cents:
+  triage: 10
+  spec: 100
+  plan: 80
+  implement: 150
+  verify: 10
+  review: 80
+  pr: 20
+  retro: 20
+  summary: 5
+  debug: 20

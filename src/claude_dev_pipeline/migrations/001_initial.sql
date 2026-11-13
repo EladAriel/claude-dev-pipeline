@@ -129,5 +129,6 @@ CREATE TABLE run_metrics (
   rounds_to_pass INTEGER,
   recorded_at TEXT,
   tier TEXT,
-  escalated INTEGER
+  escalated INTEGER,
+  halt_reason TEXT
 );

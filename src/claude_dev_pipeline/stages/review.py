@@ -70,6 +70,7 @@ def execute_review(
     schema: Path | None = None,
     quick_model: str = "claude-sonnet-5.5",
     finder_model: str = "claude-opus-5.5",
+    only_checks: list[str] | None = None,
 ) -> ReviewResult:
     if not enabled:
         raise ReviewSkipped("stages.review.enabled is false")
@@ -101,7 +102,8 @@ def execute_review(
     schema_path = schema or _default_schema()
     for index, round_data in enumerate(rounds[:max_rounds], start=1):
         rounds_run = index
-        findings = _prepare_findings(round_data.get("findings") or [], model, seen)
+        raw_findings = _limit_checks(round_data.get("findings") or [], only_checks)
+        findings = _prepare_findings(raw_findings, model, seen)
         codex_findings, codex_votes, tokens, codex_amount, called = _codex_round(
             enabled=codex_enabled,
             schema=schema_path,
@@ -242,6 +244,13 @@ def _adapter():
 
 class CodexError(Exception):
     pass
+
+
+def _limit_checks(raw: list[dict], only_checks: list[str] | None) -> list[dict]:
+    if not only_checks:
+        return list(raw)
+    allowed = set(only_checks)
+    return [item for item in raw if str(item.get("check") or "bug-hunt") in allowed]
 
 
 def _prepare_findings(raw: list[dict], model: str, seen: set[str]) -> list[dict]:

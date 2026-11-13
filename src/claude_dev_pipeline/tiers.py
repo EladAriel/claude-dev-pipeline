@@ -40,7 +40,9 @@ def assign_tier(artifact: dict, tiers: dict, models: dict) -> dict:
     """Fill tier, signals, and routing. Raise the tier when signals demand it."""
     updated = dict(artifact)
     signals = _signals(artifact.get("signals"))
-    stated = str(artifact.get("tier") or RISK_TO_TIER.get(str(artifact.get("risk_tier")), "M"))
+    explicit = str(artifact.get("tier") or "").strip() in ORDER
+    derived = RISK_TO_TIER.get(str(artifact.get("risk_tier")), "M")
+    stated = str(artifact.get("tier")) if explicit else derived
     if stated not in ORDER:
         stated = "M"
     floor = _signal_floor(signals, tiers.get("signal_floors") or {})
@@ -55,7 +57,7 @@ def assign_tier(artifact: dict, tiers: dict, models: dict) -> dict:
         "budget_cents": int(spec.get("budget_cents") or 0),
         "codex": str(spec.get("codex") or "on"),
         "escalated": chosen != stated,
-        "lane": str(spec.get("lane") or "standard"),
+        "lane": str(spec.get("lane") or "standard") if explicit else "standard",
         "models": overrides,
         "requires_approval": bool(spec.get("requires_approval")),
         "review_depth": str(spec.get("review_depth") or updated["risk_tier"]),

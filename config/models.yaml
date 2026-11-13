@@ -1,0 +1,67 @@
+# Logical model ids for the scaffold. Exact API model strings are confirmed
+# when a later stage creates agents. Nothing here is fetched over the network.
+triage:
+  provider: anthropic
+  model: claude-haiku-5.5
+  effort: low
+spec:
+  provider: anthropic
+  model: claude-opus-5.5
+  effort: medium
+plan:
+  provider: anthropic
+  model: claude-opus-5.5
+  effort: medium
+implement:
+  provider: anthropic
+  model: claude-sonnet-5.5
+  effort: high
+verify:
+  provider: anthropic
+  model: claude-haiku-5.5
+  effort: low
+simplify:
+  provider: anthropic
+  model: claude-sonnet-5.5
+  effort: medium
+risk:
+  provider: anthropic
+  model: claude-haiku-5.5
+  effort: low
+finder-bugs:
+  provider: anthropic
+  model: claude-opus-5.5
+  effort: medium
+finder-standards:
+  provider: anthropic
+  model: claude-sonnet-5.5
+  effort: medium
+finder-history:
+  provider: anthropic
+  model: claude-haiku-5.5
+  effort: low
+security:
+  provider: anthropic
+  model: claude-sonnet-5.5
+  effort: medium
+verifier:
+  provider: anthropic
+  model: claude-sonnet-5.5
+  effort: low
+rank:
+  provider: anthropic
+  model: claude-sonnet-5.5
+  effort: low
+pr:
+  provider: anthropic
+  model: claude-haiku-5.5
+  effort: low
+retro:
+  provider: anthropic
+  model: claude-sonnet-5.5
+  effort: medium
+codex:
+  provider: openai
+  model: gpt-6.1-sol
+  effort: none
+  invocation: codex exec --sandbox read-only

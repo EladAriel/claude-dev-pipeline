@@ -1,0 +1,9 @@
+display_name: vault-atlassian-read
+type: static_bearer
+credential: external
+server_url: https://mcp.atlassian.com/v2/mcp
+scopes:
+  - read:jira
+  - search:jira
+  - read:confluence
+  - search:confluence

@@ -1,0 +1,4 @@
+title = "claude-dev-pipeline"
+
+[extend]
+useDefault = true

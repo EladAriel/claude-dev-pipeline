@@ -1,0 +1,24 @@
+# Computed by the orchestrator and stored on the run. Not a second budget.
+per_stage:
+  - success
+  - first_try_success
+  - loops
+  - tokens
+  - cost
+  - active_seconds
+  - wall_seconds
+  - budget_events
+  - trajectory_violations
+per_run:
+  - cost_usd
+  - hidden_failure
+  - owner_interventions
+  - rounds_to_pass
+  - trajectory_violations
+review:
+  - candidates_to_survivors
+  - acceptance_by_response
+  - rounds_to_pass
+  - vote_agreement
+recorded_in: runs/pipeline.db
+table: run_metrics

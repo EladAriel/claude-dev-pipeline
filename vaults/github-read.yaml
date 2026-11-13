@@ -1,0 +1,4 @@
+display_name: vault-github-read
+type: static_bearer
+credential: external
+server_url: https://api.githubcopilot.com/mcp/x/issues/readonly

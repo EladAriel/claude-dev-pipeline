@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": true,
+  "title": "ledger",
+  "required": [
+    "run_id",
+    "stage",
+    "amount_cents"
+  ]
+}

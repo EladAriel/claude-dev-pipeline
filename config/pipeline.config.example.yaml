@@ -1,0 +1,157 @@
+# Example config for a target repository. Dry-run prints this plan and does not
+# run the commands or contact MCP. Replace the check commands for the target stack.
+base_branch: main
+setup: []
+checks:
+  test: "pytest"
+  lint: "ruff check ."
+  typecheck: ""
+  build: ""
+e2e: []
+network:
+  allowed_hosts: []
+paths:
+  protected:
+    - ".github/**"
+    - "**/auth/**"
+    - "infra/**"
+  ignore_in_review:
+    - "**/generated/**"
+    - "*.lock"
+review:
+  depth: auto
+  max_rounds: 3
+  max_nits: 3
+limits:
+  max_diff_lines: 1500
+budgets_usd:
+  run: 20
+models:
+  triage: {provider: anthropic, model: claude-haiku-5.5, effort: low}
+  spec: {provider: anthropic, model: claude-opus-5.5, effort: medium}
+  plan: {provider: anthropic, model: claude-opus-5.5, effort: medium}
+  implement: {provider: anthropic, model: claude-sonnet-5.5, effort: high}
+  verify: {provider: anthropic, model: claude-haiku-5.5, effort: low}
+  simplify: {provider: anthropic, model: claude-sonnet-5.5, effort: medium}
+  risk: {provider: anthropic, model: claude-haiku-5.5, effort: low}
+  finder-bugs: {provider: anthropic, model: claude-opus-5.5, effort: medium}
+  finder-standards: {provider: anthropic, model: claude-sonnet-5.5, effort: medium}
+  finder-history: {provider: anthropic, model: claude-haiku-5.5, effort: low}
+  security: {provider: anthropic, model: claude-sonnet-5.5, effort: medium}
+  verifier: {provider: anthropic, model: claude-sonnet-5.5, effort: low}
+  rank: {provider: anthropic, model: claude-sonnet-5.5, effort: low}
+  pr: {provider: anthropic, model: claude-haiku-5.5, effort: low}
+  retro: {provider: anthropic, model: claude-sonnet-5.5, effort: medium}
+  codex: {provider: openai, model: gpt-6.1-sol, effort: none}
+integrations:
+  tracker: github
+  jira:
+    site: ""
+    project: ""
+    approve_label: agent-approved
+    transition_on_pr: "In Review"
+  confluence:
+    spaces: []
+  github_mcp:
+    issues_readonly: false
+  code_graph: none
+# Remote MCP only (type url + vault). All servers stay off in the scaffold.
+# A different URL path is a different server, so read and write use different vaults.
+mcp_servers:
+  github_issues_readonly:
+    enabled: false
+    optional: true
+    type: url
+    url: https://api.githubcopilot.com/mcp/x/issues/readonly
+    auth:
+      type: static_bearer
+      vault: vault-github-read
+    toolset:
+      default_enabled: false
+      permission: always_ask
+    stages:
+      spec:
+        access: read
+        permission: always_ask
+        tools: [issue_read, search_issues]
+  github_pull_requests:
+    enabled: false
+    type: url
+    url: https://api.githubcopilot.com/mcp/x/pull_requests
+    auth:
+      type: static_bearer
+      vault: vault-github-pr
+    toolset:
+      default_enabled: false
+      permission: always_ask
+    deny_tools: [merge_pull_request, update_pull_request]
+    stages:
+      pr:
+        access: write
+        permission: always_ask
+        draft: true
+        tools: [create_pull_request]
+  atlassian:
+    enabled: false
+    type: url
+    url: https://mcp.atlassian.com/v2/mcp
+    auth:
+      type: static_bearer
+      read_vault: vault-atlassian-read
+      write_vault: vault-atlassian-write
+    toolset:
+      default_enabled: false
+    deny_tools:
+      - executeRead
+      - discover
+      - executeWrite
+      - executeDestructive
+      - createJiraIssue
+      - editJiraIssue
+      - createConfluenceContent
+      - updateConfluenceContent
+    stages:
+      spec:
+        access: read
+        vault: vault-atlassian-read
+        permission: always_ask
+        tools:
+          - getJiraIssue
+          - listJiraIssueComments
+          - searchJiraIssuesUsingJql
+          - getConfluenceContent
+          - searchConfluence
+          - getAccessibleAtlassianResources
+      plan:
+        access: read
+        vault: vault-atlassian-read
+        permission: always_ask
+        tools: [getJiraIssue, searchJiraIssuesUsingJql]
+      finder-standards:
+        access: read
+        optional: true
+        vault: vault-atlassian-read
+        permission: always_ask
+        tools: [getConfluenceContent]
+      pr:
+        access: write
+        vault: vault-atlassian-write
+        permission: always_ask
+        tools: [addOrEditJiraIssueComment, transitionJiraIssue]
+# Not an MCP server. Managed Agents cannot attach a local stdio server.
+code_graph:
+  enabled: false
+  transport: sandbox-cli
+  mcp: false
+  mode: code-only
+  pilots:
+    codegraph:
+      enabled: false
+      package: "@colbymchenry/codegraph"
+      version: "1.6.2"
+      stages: [spec, plan, finder-history]
+    graphify:
+      enabled: false
+      package: graphifyy
+      version: "0.9.108"
+      stages: []

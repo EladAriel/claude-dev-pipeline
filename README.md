@@ -36,7 +36,7 @@ not read `.env` and does not call an API.
 pipeline --dry-run --config config/pipeline.config.example.yaml
 pipeline run "describe the change"
 pipeline run --spec path/to/spec.md
-pipeline run --issue 12 --issue-snapshot issues/12.json
+pipeline run --issue 12 --issue-snapshot issues/12.json --model-fixture triage-response.json
 pipeline status
 pipeline import plan.json
 ```

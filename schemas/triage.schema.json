@@ -1,11 +1,30 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "additionalProperties": true,
   "title": "triage",
+  "type": "object",
+  "additionalProperties": false,
   "required": [
+    "classify",
     "category",
     "state",
-    "confidence"
-  ]
+    "risk_tier",
+    "decision",
+    "needs_human",
+    "confidence",
+    "injection_suspected",
+    "summary"
+  ],
+  "properties": {
+    "classify": {"enum": ["bug", "enhancement"]},
+    "category": {"enum": ["bug", "enhancement"]},
+    "state": {
+      "enum": ["needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"]
+    },
+    "risk_tier": {"enum": ["Quick", "Standard", "Deep"]},
+    "decision": {"enum": ["route", "reject"]},
+    "needs_human": {"type": "boolean"},
+    "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+    "injection_suspected": {"type": "boolean"},
+    "summary": {"type": "string", "minLength": 1}
+  }
 }

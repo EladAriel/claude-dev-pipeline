@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from claude_dev_pipeline import __version__
-from claude_dev_pipeline.budget import format_usd
+from claude_dev_pipeline.budget import BudgetHardStop, format_usd
 from claude_dev_pipeline.config import (
     effective_model,
     load_yaml,
@@ -34,6 +34,7 @@ from claude_dev_pipeline.issues import (
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 from claude_dev_pipeline.plan import STAGES, Stage, require_gates
 from claude_dev_pipeline.scan import load_allowlist, scan_tree
+from claude_dev_pipeline.stages.triage import TriageError, execute_triage
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -78,6 +79,11 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--budgets", type=Path)
     run.add_argument("--db", type=Path)
     run.add_argument("--runs-dir", type=Path)
+    run.add_argument(
+        "--model-fixture",
+        type=Path,
+        help="recorded triage response; required to run triage, and never a live API call",
+    )
 
     status = sub.add_parser("status", help="print the latest local run")
     status.add_argument("--db", type=Path)
@@ -139,8 +145,51 @@ def _run(args: argparse.Namespace) -> int:
     models, pipeline, caps, cap = loaded
     run_id = "run-" + uuid.uuid4().hex[:12]
     started = datetime.now(UTC).replace(microsecond=0).isoformat()
+    runs_dir = args.runs_dir or Path("runs")
+    db_path = args.db or Path("runs/pipeline.db")
+    run_dir = runs_dir / run_id
+    triage_status = "dry-run"
+    risk_tier = None
+    mode = "dry-run"
+    if args.model_fixture is not None and not args.dry_run:
+        if intake.kind != "issue":
+            print(
+                "triage runs from an approved issue, not from free text or a spec", file=sys.stderr
+            )
+            return 2
+        mode = "triage-fixture"
+        if not stage_enabled(pipeline, "triage"):
+            triage_status = "skipped"
+            print("triage: disabled by stages.triage.enabled")
+        else:
+            snapshot = json.loads(
+                (args.issue_snapshot or Path("issues") / f"{args.issue}.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            try:
+                result = execute_triage(
+                    snapshot=snapshot,
+                    fixture_path=args.model_fixture,
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    spent_cents=0,
+                    run_cap_cents=cap,
+                    stage_cap_cents=caps["triage"],
+                )
+            except BudgetHardStop as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            except TriageError as exc:
+                print(str(exc), file=sys.stderr)
+                return exc.code
+            triage_status = result.status
+            risk_tier = result.risk_tier
+            print(f"triage: {result.decision}")
+            print(f"risk-tier: {result.risk_tier}")
+            print(f"triage-cost: {format_usd(result.amount_cents)}")
     print("claude-dev-pipeline scaffold")
-    print("mode: dry-run")
+    print(f"mode: {mode}")
     print("api-calls: none")
     print("merge: none")
     print(f"run-id: {run_id}")
@@ -148,7 +197,8 @@ def _run(args: argparse.Namespace) -> int:
     print(f"ref: {intake.ref}")
     print("pr: none")
     print(f"run-cap: {format_usd(cap)}")
-    _print_stages(models, pipeline, caps)
+    if args.dry_run or args.model_fixture is None:
+        _print_stages(models, pipeline, caps)
     payload = {
         "run_id": run_id,
         "repo": None,
@@ -156,9 +206,9 @@ def _run(args: argparse.Namespace) -> int:
         "pipeline_version": __version__,
         "started_at": started,
         "ended_at": started,
-        "status": "dry-run",
-        "risk_tier": None,
-        "review_depth": None,
+        "status": triage_status,
+        "risk_tier": risk_tier,
+        "review_depth": risk_tier,
         "run_cap_usd": cap / 100,
         "outcome": None,
         "verified_by": None,
@@ -166,8 +216,6 @@ def _run(args: argparse.Namespace) -> int:
         "intake_ref": intake.ref,
         "pr_url": None,
     }
-    runs_dir = args.runs_dir or Path("runs")
-    db_path = args.db or Path("runs/pipeline.db")
     write_run_artifact(runs_dir, db_path, payload)
     print(f"recorded: {db_path}")
     return 0

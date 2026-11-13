@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from claude_dev_pipeline.budget import BudgetHardStop, authorize_session_cents
+from claude_dev_pipeline.flaky import settle_flakes
 from claude_dev_pipeline.harness import discover
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
 
@@ -51,6 +52,7 @@ def execute_verify(
         raise VerifyError("no done ticket to verify")
     timeout = float(config.get("checks_timeout_seconds") or 30)
     tickets = [_verify_ticket(item, config, timeout) for item in done]
+    tickets, flake_info = settle_flakes(tickets, config, run_dir, run_id, _run_command)
     coverage_gaps = _coverage_gaps(spec, plan, tickets)
     commands_failed = [item for item in tickets if not item["passed"]]
     test_ran = any(item.get("name") == "test" for ticket in tickets for item in ticket["commands"])
@@ -69,6 +71,7 @@ def execute_verify(
             run_cap_cents=run_cap_cents,
             usage={},
             verification="unverified",
+            flaky=flake_info.get("flaky") or [],
         )
         return VerifyResult(status="unverified", model_called=False, amount_cents=0)
     if not commands_failed and not coverage_gaps:
@@ -83,6 +86,8 @@ def execute_verify(
             budget_cents=0,
             run_cap_cents=run_cap_cents,
             usage={},
+            flaky=flake_info.get("flaky") or [],
+            classified=flake_info.get("classified") or [],
         )
         return VerifyResult(status="pass", model_called=False, amount_cents=0)
     summary, suggested, usage = _failure_summary(fixture_path, coverage_gaps, commands_failed)
@@ -118,6 +123,8 @@ def execute_verify(
         run_cap_cents=run_cap_cents,
         usage=usage,
         coverage_gaps=coverage_gaps,
+        flaky=flake_info.get("flaky") or [],
+        classified=flake_info.get("classified") or [],
     )
     return VerifyResult(status="fail", model_called=True, amount_cents=amount_cents)
 
@@ -136,6 +143,7 @@ def _verify_ticket(report: dict, config: dict, timeout: float) -> dict:
     return {
         "ticket": str(report.get("ticket")),
         "passed": passed,
+        "worktree": str(worktree),
         "commands": commands,
         "failure_summary": "",
         "suggested_fix_ticket": None,
@@ -269,12 +277,16 @@ def _finish(
     usage: dict,
     coverage_gaps: list[str] | None = None,
     verification: str = "tested",
+    flaky: list | None = None,
+    classified: list | None = None,
 ) -> None:
     payload = {
         "status": status,
         "verification": verification,
         "model_called": model_called,
         "coverage_gaps": coverage_gaps or [],
+        "flaky": flaky or [],
+        "classified": classified or [],
         "tickets": tickets,
     }
     (run_dir / "verify.json").write_text(

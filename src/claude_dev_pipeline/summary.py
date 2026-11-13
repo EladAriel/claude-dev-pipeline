@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from claude_dev_pipeline.clarity import summary_lines
+from claude_dev_pipeline.flaky import risk_line
 from claude_dev_pipeline.github_gate import admit_issue
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
 
@@ -117,6 +118,9 @@ def _risks(run_dir: Path, metrics: dict) -> str:
             "WARNING: no test command was detected. Verification is unverified. "
             "Review depth was raised one level."
         )
+    flaky = risk_line(verify)
+    if flaky:
+        return flaky
     if (run_dir / "diagnosis.md").is_file() and not (run_dir / "pr.json").is_file():
         return "The diagnosis is not a fix. Nothing has been merged."
     if metrics.get("stop_reason") == "budget-halt" or metrics.get("budget_events"):

@@ -1,10 +1,13 @@
 # Codex reviewer
 
-Not wired in the scaffold. A later stage may run, locally:
+`adapter.py` runs:
 
 ```bash
-codex exec --sandbox read-only
+codex exec --sandbox read-only --output-schema reviewers/codex/finding.schema.json -o <findings>
 ```
 
-The scaffold does not invoke that command. Herdr can host it with
-`--kind codex`; see `docs/herdr.md`. The sandbox stays read-only.
+The sandbox is read-only. Token counts are recorded when the JSON reports them
+and stay null otherwise. If `reviewers.codex.enabled` is false, or `codex` is
+not on `PATH`, review continues with `cross_model` false.
+
+The stage does not call a paid API by itself. A real `codex` binary would.

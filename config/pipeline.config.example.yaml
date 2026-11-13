@@ -22,6 +22,10 @@ review:
   depth: auto
   max_rounds: 3
   max_nits: 3
+  quick_finder_model: claude-sonnet-5.5
+reviewers:
+  codex:
+    enabled: true
 limits:
   max_diff_lines: 1500
 budgets_usd:
@@ -36,6 +40,8 @@ stages:
   implement:
     enabled: true
   verify:
+    enabled: true
+  review:
     enabled: true
 models:
   triage: {provider: anthropic, model: claude-haiku-5.5, effort: low}

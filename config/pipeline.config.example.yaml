@@ -47,6 +47,9 @@ stages:
     enabled: true
   debug:
     enabled: true
+  summary:
+    enabled: true
+    narrative: true
   spec:
     enabled: true
   plan:

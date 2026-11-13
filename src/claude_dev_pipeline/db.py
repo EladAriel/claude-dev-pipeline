@@ -117,12 +117,13 @@ def _index_ledger_line(conn: sqlite3.Connection, row: dict) -> None:
     cursor = conn.execute(
         """
         INSERT INTO stages (
-          run_id, name, provider, model, effort, status, budget_cents, gate_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          run_id, name, ticket, provider, model, effort, status, budget_cents, gate_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             row["run_id"],
             row["stage"],
+            row.get("ticket") or "",
             row.get("provider"),
             row.get("model"),
             row.get("effort") or "",

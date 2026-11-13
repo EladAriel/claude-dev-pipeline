@@ -9,7 +9,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Triage | Offline fixtures: unapproved issues make no model call; `triage.json` matches the schema | `stages.triage.enabled: false`, then `git revert` the triage commit |
 | Spec | Offline fixtures: `spec.json` has acceptance ids, seams, and e2e scenarios; a rejected triage writes none | `stages.spec.enabled: false`, then `git revert` the spec commit |
 | Plan | Offline fixtures: `plan.json` is an ordered DAG and covers every spec acceptance id; a spec that needs a human writes none | `stages.plan.enabled: false`, then `git revert` the plan commit |
-| Implement | Red-green evidence; pushes stay on `agent/*` | Delete the `agent/*` branch and revert |
+| Implement | Offline fixtures in a temp git repo: one local commit per done ticket; a blocked ticket stops the run; the diff is scanned | `stages.implement.enabled: false`, then `git revert` the implement commit |
 | Verify | Evidence quotes real command output; end-to-end scenarios are recorded | Disable the check and revert |
 | Simplify | Checks stay green, or the simplify commit is dropped | Drop that commit |
 | Review | Votes, the round cap, and the security block hold in local tests | Disable a finder or the Codex adapter |

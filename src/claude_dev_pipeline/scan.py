@@ -65,11 +65,11 @@ def scan_tree(root: Path, allowlist: set[str]) -> list[Finding]:
     return findings
 
 
-def _scan_file(path: Path, relative: str) -> list[Finding]:
-    data = path.read_bytes()
-    if b"\0" in data[:1024] or len(data) > 2_000_000:
-        return []
-    text = data.decode("utf-8", errors="replace")
+_SECRET = re.compile("(?:" + "sk-" + "ant-|gh" + "p_|github_" + "pat_|" + "AK" + "IA[0-9A-Z]{8,})")
+
+
+def scan_text(text: str, relative: str = "diff") -> list[Finding]:
+    """Scan one blob. Findings name the rule and not the matched secret."""
     findings: list[Finding] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         if any(pattern.search(line) for _, pattern in _PRIVATE_RES):
@@ -77,4 +77,14 @@ def _scan_file(path: Path, relative: str) -> list[Finding]:
             continue
         if _ACCOUNT_ID.search(line):
             findings.append(Finding(relative, line_no, "account-id"))
+            continue
+        if _SECRET.search(line):
+            findings.append(Finding(relative, line_no, "secret"))
     return findings
+
+
+def _scan_file(path: Path, relative: str) -> list[Finding]:
+    data = path.read_bytes()
+    if b"\0" in data[:1024] or len(data) > 2_000_000:
+        return []
+    return scan_text(data.decode("utf-8", errors="replace"), relative)

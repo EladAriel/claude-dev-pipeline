@@ -121,9 +121,9 @@ STAGES: tuple[Stage, ...] = (
         "implement",
         "implement",
         ("tdd", "implement"),
-        notes="one session per ticket",
-        verify="red-green evidence is present and pushes stay on agent branches",
-        rollback="delete the agent branch, disable the stage, and revert its PR",
+        notes="one session per ticket in plan order on agent/<run>-<ticket>; no publish",
+        verify="each ticket has an impl report and a local commit, or the run stops blocked",
+        rollback="stages.implement.enabled false, then git revert the implement commit",
     ),
     _stage(
         "4a",

@@ -16,6 +16,9 @@ implement:
   provider: anthropic
   model: claude-sonnet-5.5
   effort: high
+  allowlist:
+    - claude-sonnet-5.5
+    - claude-opus-5.5
 verify:
   provider: anthropic
   model: claude-haiku-5.5

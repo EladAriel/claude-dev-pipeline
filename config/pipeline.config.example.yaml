@@ -33,6 +33,8 @@ stages:
     enabled: true
   plan:
     enabled: true
+  implement:
+    enabled: true
 models:
   triage: {provider: anthropic, model: claude-haiku-5.5, effort: low}
   spec: {provider: anthropic, model: claude-opus-5.5, effort: medium}

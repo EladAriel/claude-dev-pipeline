@@ -72,6 +72,8 @@ stages:
     enabled: true
   implement:
     enabled: true
+  deps:
+    enabled: true
   verify:
     enabled: true
   flaky:

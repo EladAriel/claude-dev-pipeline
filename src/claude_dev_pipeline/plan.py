@@ -104,7 +104,7 @@ STAGES: tuple[Stage, ...] = (
         "spec",
         ("grill-with-docs", "to-spec"),
         verify="the spec artifact has acceptance ids, seams, and e2e scenarios",
-        rollback=_REVERT,
+        rollback="stages.spec.enabled false, then git revert the spec commit",
     ),
     _stage(
         "2",

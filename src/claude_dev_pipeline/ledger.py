@@ -23,6 +23,7 @@ class LedgerEntry:
     output_tokens: int = 0
     web_searches: int = 0
     budget_cents: int = 0
+    effort: str = ""
 
 
 class LedgerError(Exception):
@@ -59,6 +60,7 @@ class Ledger:
                         output_tokens=int(payload.get("output_tokens", 0)),
                         web_searches=int(payload.get("web_searches", 0)),
                         budget_cents=int(payload.get("budget_cents", 0)),
+                        effort=str(payload.get("effort", "")),
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:

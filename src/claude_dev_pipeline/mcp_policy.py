@@ -199,6 +199,56 @@ def _validate_code_graph(spec: object, errors: list[str]) -> None:
         errors.append("graphify pilot must pin graphifyy 0.9.108")
 
 
+class McpPolicyError(Exception):
+    def __init__(self, errors: list[str]) -> None:
+        super().__init__("; ".join(errors))
+        self.errors = errors
+
+
+_WRITE_TOOLS = (
+    MERGE_TOOLS
+    | BLOCKED_ATLASSIAN_TOOLS
+    | ATLASSIAN_WRITE_TOOLS
+    | CONFLUENCE_WRITE_TOOLS
+    | GITHUB_PR_TOOLS
+)
+
+
+def read_only_mcp_for(config: dict, stage: str) -> list[dict]:
+    """Return read-only MCP assignments for one stage. Nothing is contacted.
+
+    Servers stay disabled unless the config turns them on. This scaffold still
+    sets ``contacted`` to false either way.
+    """
+    if config.get("mcp_servers"):
+        problems = validate_mcp_config(config)
+        if problems:
+            raise McpPolicyError(problems)
+    assigned: list[dict] = []
+    for name, spec in (config.get("mcp_servers") or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        stage_spec = (spec.get("stages") or {}).get(stage)
+        if not stage_spec:
+            continue
+        if stage_spec.get("access") != "read":
+            raise McpPolicyError([f"{name} is not read-only on {stage}"])
+        tools = [str(tool) for tool in stage_spec.get("tools") or []]
+        if set(tools) & _WRITE_TOOLS:
+            raise McpPolicyError([f"{name} grants a write tool on {stage}"])
+        assigned.append(
+            {
+                "name": name,
+                "enabled": spec.get("enabled") is True,
+                "access": "read",
+                "tools": tools,
+                "url": spec.get("url"),
+                "contacted": False,
+            }
+        )
+    return assigned
+
+
 def _tool_names(spec: dict) -> list[str]:
     names: list[str] = []
     for stage in (spec.get("stages") or {}).values():

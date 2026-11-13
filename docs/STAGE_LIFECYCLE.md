@@ -13,6 +13,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Verify | Offline fake commands: all-green writes `verify.json` without a model fixture; a failure stops the run | `stages.verify.enabled: false`, then `git revert` the verify commit |
 | Simplify | Checks stay green, or the simplify commit is dropped | Drop that commit |
 | Review | Offline fixtures and a fake codex: 2-of-3 cross-family vote, security block, round cap, missing codex | `stages.review.enabled: false` and `reviewers.codex.enabled: false`, then `git revert` the review commit |
+| PR | Offline temp repo and fake MCP: a blocking review opens nothing; merge is denied; an unapproved issue is untouched | `stages.pr.enabled: false`, then `git revert` the PR commit |
 | PR | Draft only; the only GitHub MCP tool is `create_pull_request` | Close the draft and disable the stage |
 | Retro | Items are proposals and are not applied | Disable retro and revert |
 | Metrics | `run_metrics` matches the ledger for that run | Rebuild the index from the run artifacts |

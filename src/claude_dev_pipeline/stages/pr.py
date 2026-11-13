@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from claude_dev_pipeline.budget import BudgetHardStop, authorize_session_cents
+from claude_dev_pipeline.flaky import body_lines
 from claude_dev_pipeline.github_gate import admit_issue
 from claude_dev_pipeline.issues import plan_status_write
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
@@ -113,6 +114,7 @@ def render_pr(run_dir: Path, *, issue_number: int | None, usage_cents: int) -> t
     if verify.get("status") == "unverified":
         lines.append("WARNING: no test command was detected. Verification is unverified.")
         lines.append("")
+    lines.extend(body_lines(verify))
     if issue_number is not None:
         lines.append(f"Fixes #{issue_number}")
         lines.append("")

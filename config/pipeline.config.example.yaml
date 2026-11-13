@@ -67,6 +67,11 @@ stages:
     enabled: true
   verify:
     enabled: true
+  flaky:
+    enabled: true
+    retries: 2
+    max_seconds: 20
+    max_cents: 0
   review:
     enabled: true
   pr:

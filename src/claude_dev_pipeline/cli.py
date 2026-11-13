@@ -34,6 +34,7 @@ from claude_dev_pipeline.issues import (
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 from claude_dev_pipeline.plan import STAGES, Stage, require_gates
 from claude_dev_pipeline.scan import load_allowlist, scan_tree
+from claude_dev_pipeline.stages.plan import PlanError, PlanSkipped, execute_plan
 from claude_dev_pipeline.stages.spec import SpecError, SpecSkipped, execute_spec
 from claude_dev_pipeline.stages.triage import TriageError, execute_triage
 
@@ -89,6 +90,11 @@ def _parser() -> argparse.ArgumentParser:
         "--spec-fixture",
         type=Path,
         help="recorded spec response; used only after triage routes, and never a live API call",
+    )
+    run.add_argument(
+        "--plan-fixture",
+        type=Path,
+        help="recorded plan response; skipped when the spec needs a human",
     )
 
     status = sub.add_parser("status", help="print the latest local run")
@@ -211,6 +217,20 @@ def _run(args: argparse.Namespace) -> int:
             if spec_status == "succeeded":
                 mode = "spec-fixture"
                 triage_status = "succeeded"
+            plan_status = _run_plan(
+                args,
+                run_dir=run_dir,
+                run_id=run_id,
+                models=models,
+                pipeline=pipeline,
+                caps=caps,
+                cap=cap,
+            )
+            if plan_status == "failed":
+                return 1
+            if plan_status == "succeeded":
+                mode = "plan-fixture"
+                triage_status = "succeeded"
     print("claude-dev-pipeline scaffold")
     print(f"mode: {mode}")
     print("api-calls: none")
@@ -298,6 +318,72 @@ def _run_spec(
     print(f"spec-cost: {format_usd(result.amount_cents)}")
     print("mcp-contacted: none")
     return "succeeded"
+
+
+def _run_plan(
+    args: argparse.Namespace,
+    *,
+    run_dir: Path,
+    run_id: str,
+    models: dict,
+    pipeline: dict,
+    caps: dict[str, int],
+    cap: int,
+) -> str | None:
+    if args.plan_fixture is None:
+        return None
+    if not stage_enabled(pipeline, "plan"):
+        print("plan: disabled by stages.plan.enabled")
+        return "skipped"
+    spec_path = run_dir / "spec.json"
+    if not spec_path.is_file():
+        print("plan: skipped (no spec)")
+        return "skipped"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    if spec.get("needs_human") is True:
+        print("plan: skipped (spec needs a human)")
+        return "skipped"
+    plan_stage = next(stage for stage in STAGES if stage.key == "plan")
+    model = effective_model(plan_stage, models, pipeline)
+    spec_md = (run_dir / "spec.md").read_text(encoding="utf-8")
+    try:
+        result = execute_plan(
+            spec=spec,
+            spec_md=spec_md,
+            fixture_path=args.plan_fixture,
+            run_dir=run_dir,
+            run_id=run_id,
+            spent_cents=_spent_cents(run_dir),
+            run_cap_cents=cap,
+            stage_cap_cents=caps["plan"],
+            mcp_config=pipeline,
+            model=model["model"],
+            effort=model["effort"],
+        )
+    except PlanSkipped as exc:
+        print(f"plan: skipped ({exc})")
+        return "skipped"
+    except BudgetHardStop as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    except PlanError as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    print(f"plan: tickets={result.tickets}")
+    print(f"plan-cost: {format_usd(result.amount_cents)}")
+    print("mcp-contacted: none")
+    return "succeeded"
+
+
+def _spent_cents(run_dir: Path) -> int:
+    ledger = run_dir / "ledger.jsonl"
+    if not ledger.is_file():
+        return 0
+    total = 0
+    for line in ledger.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            total += int(json.loads(line)["amount_cents"])
+    return total
 
 
 def _status(args: argparse.Namespace) -> int:

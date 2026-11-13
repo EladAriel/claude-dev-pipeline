@@ -1,9 +1,41 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "type": "object",
-  "additionalProperties": true,
   "title": "plan",
-  "required": [
-    "tasks"
-  ]
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tasks"],
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "body",
+          "acceptance_criteria",
+          "files",
+          "seams",
+          "test_plan",
+          "blocked_by",
+          "estimate",
+          "suggested_model"
+        ],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "title": {"type": "string", "minLength": 1},
+          "body": {"type": "string", "minLength": 1},
+          "acceptance_criteria": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "files": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "seams": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+          "test_plan": {"type": "string", "minLength": 1},
+          "blocked_by": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "estimate": {"enum": ["S", "M", "L"]},
+          "suggested_model": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
 }

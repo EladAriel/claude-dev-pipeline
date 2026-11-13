@@ -43,6 +43,7 @@ from claude_dev_pipeline.stages.implement import (
 from claude_dev_pipeline.stages.plan import PlanError, PlanSkipped, execute_plan
 from claude_dev_pipeline.stages.spec import SpecError, SpecSkipped, execute_spec
 from claude_dev_pipeline.stages.triage import TriageError, execute_triage
+from claude_dev_pipeline.stages.verify import VerifyError, execute_verify
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -106,6 +107,11 @@ def _parser() -> argparse.ArgumentParser:
         "--implement-fixture",
         type=Path,
         help="recorded per-ticket edits; never publishes the target repo",
+    )
+    run.add_argument(
+        "--verify-fixture",
+        type=Path,
+        help="recorded failure summary; not read when every check passes",
     )
     run.add_argument("--target-repo", type=Path)
 
@@ -176,6 +182,7 @@ def _run(args: argparse.Namespace) -> int:
     risk_tier = None
     mode = "dry-run"
     spent_cents = 0
+    exit_code = 0
     if args.model_fixture is not None and not args.dry_run:
         if intake.kind != "issue":
             print(
@@ -260,6 +267,23 @@ def _run(args: argparse.Namespace) -> int:
             if impl_status == "blocked":
                 mode = "implement-blocked"
                 triage_status = "blocked"
+            if impl_status == "succeeded":
+                verify_status = _run_verify(
+                    args,
+                    run_dir=run_dir,
+                    run_id=run_id,
+                    pipeline=pipeline,
+                    caps=caps,
+                    cap=cap,
+                    effort=str((models.get("verify") or {}).get("effort") or "low"),
+                )
+                if verify_status == "failed":
+                    mode = "verify-failed"
+                    triage_status = "failed"
+                    exit_code = 1
+                elif verify_status == "succeeded":
+                    mode = "verify-pass"
+                    triage_status = "succeeded"
     print("claude-dev-pipeline scaffold")
     print(f"mode: {mode}")
     print("api-calls: none")
@@ -290,7 +314,7 @@ def _run(args: argparse.Namespace) -> int:
     }
     write_run_artifact(runs_dir, db_path, payload)
     print(f"recorded: {db_path}")
-    return 0
+    return exit_code
 
 
 def _run_spec(
@@ -454,6 +478,42 @@ def _run_implement(
     if result.stopped_at:
         print(f"implement-stopped: {result.stopped_at}")
     return result.status
+
+
+def _run_verify(
+    args: argparse.Namespace,
+    *,
+    run_dir: Path,
+    run_id: str,
+    pipeline: dict,
+    caps: dict[str, int],
+    cap: int,
+    effort: str,
+) -> str | None:
+    if not stage_enabled(pipeline, "verify"):
+        print("verify: disabled by stages.verify.enabled")
+        return "skipped"
+    try:
+        result = execute_verify(
+            run_dir=run_dir,
+            run_id=run_id,
+            config=pipeline,
+            fixture_path=getattr(args, "verify_fixture", None),
+            spent_cents=_spent_cents(run_dir),
+            run_cap_cents=cap,
+            stage_cap_cents=caps["verify"],
+            effort=effort,
+        )
+    except BudgetHardStop as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    except VerifyError as exc:
+        print(str(exc), file=sys.stderr)
+        return "failed"
+    print(f"verify: {result.status}")
+    print(f"verify-model-called: {str(result.model_called).lower()}")
+    print(f"verify-cost: {format_usd(result.amount_cents)}")
+    return "failed" if result.status == "fail" else "succeeded"
 
 
 def _implement_cfg(models: dict, pipeline: dict) -> dict:

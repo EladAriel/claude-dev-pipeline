@@ -130,8 +130,9 @@ STAGES: tuple[Stage, ...] = (
         "verify-evidence",
         "verify",
         "verify",
+        notes="commands first; model only when a command fails",
         verify="the report contains the real command output",
-        rollback=_REVERT,
+        rollback="stages.verify.enabled false, then git revert the verify commit",
     ),
     _stage(
         "4b",

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from claude_dev_pipeline.budget import BudgetHardStop, authorize_session_cents
+from claude_dev_pipeline.conflicts import pr_lines
 from claude_dev_pipeline.flaky import body_lines
 from claude_dev_pipeline.github_gate import admit_issue
 from claude_dev_pipeline.issues import plan_status_write
@@ -66,6 +67,7 @@ def execute_pr(
     model: str = "claude-haiku-5.5",
     effort: str = "low",
     usage_cents: int = 0,
+    reuse_branch: bool = False,
 ) -> PrResult:
     if not enabled:
         raise PrSkipped("stages.pr.enabled is false")
@@ -76,7 +78,8 @@ def execute_pr(
         usage_cents=usage_cents,
     )
     branch = f"pipeline/{run_id}"
-    _combine(target_repo, branch, base, ticket_branches)
+    if not reuse_branch:
+        _combine(target_repo, branch, base, ticket_branches)
     pushed = False
     pr_url = None
     if push:
@@ -133,6 +136,7 @@ def render_pr(run_dir: Path, *, issue_number: int | None, usage_cents: int) -> t
     if summary:
         lines.append(summary)
     lines.extend(dispute_lines(review))
+    lines.extend(pr_lines(run_dir))
     lines.append("")
     lines.append(f"Cost so far: ${ledger_cost / 100:.2f}")
     return title, "\n".join(lines) + "\n", ledger_cost

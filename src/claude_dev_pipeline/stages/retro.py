@@ -132,6 +132,7 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
         "escalated": bool(routing.get("escalated")),
         "clarity_score": clarity.get("score"),
         "clarity_halted": bool(clarity.get("halted")),
+        "duplicate_halted": bool(_read(run_dir / "duplicate.json").get("halted")),
         "review_survivors_by_family": survivors,
         "agreement_rate": agreement_rate(run_dir),
         "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat(),

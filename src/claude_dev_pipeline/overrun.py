@@ -126,12 +126,20 @@ def write_halt(
         "version": 1,
     }
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "halt.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    (run_dir / "state.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    (run_dir / "halt.json").write_text(text, encoding="utf-8")
+    state_path = run_dir / "state.json"
+    existing: dict = {}
+    if state_path.is_file():
+        loaded = json.loads(state_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            existing = loaded
+    prior = list(existing.get("completed_stages") or [])
+    existing.update(payload)
+    for name in prior:
+        if name not in existing["completed_stages"]:
+            existing["completed_stages"].append(name)
+    state_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _needed(stage: str, estimates: dict[str, int]) -> int:

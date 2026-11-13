@@ -11,6 +11,16 @@ from pathlib import Path
 
 from claude_dev_pipeline import __version__
 from claude_dev_pipeline.budget import BudgetHardStop, format_usd, stage_run_cap
+from claude_dev_pipeline.checkpoint import (
+    discard_ticket,
+    fresh_state,
+    input_hash,
+    load_state,
+    mark_stage,
+    record_ticket,
+    save_state,
+    ticket_intact,
+)
 from claude_dev_pipeline.config import (
     effective_model,
     load_yaml,
@@ -74,6 +84,10 @@ from claude_dev_pipeline.summary import write_summary
 from claude_dev_pipeline.tiers import TierApprovalRequired, apply_routing_models, load_tiers
 
 
+class CrashDrill(Exception):
+    """Raised when --crash-after stops inside a ticket."""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -91,6 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         return _report(args)
     if args.command == "debug":
         return _debug(args)
+    if args.command == "resume":
+        return _resume(args)
     if args.command == "run":
         return _run(args)
     if args.dry_run:
@@ -161,6 +177,18 @@ def _parser() -> argparse.ArgumentParser:
         help="recorded retro proposals; never applied and never a live API call",
     )
     run.add_argument("--target-repo", type=Path)
+    run.add_argument(
+        "--crash-after",
+        help="stop after a stage or implement:TICKET and leave the checkpoint",
+    )
+
+    resumed = sub.add_parser("resume", help="continue a run from its last checkpoint")
+    resumed.add_argument("run_id")
+    resumed.add_argument("--runs-dir", type=Path)
+    resumed.add_argument("--force", action="store_true")
+    resumed.add_argument("--run-cap-cents", type=int)
+    resumed.add_argument("--config", type=Path)
+    resumed.add_argument("--db", type=Path)
     run.add_argument("--tiers", type=Path)
     run.add_argument("--budget-policy", type=Path)
     run.add_argument(
@@ -254,11 +282,65 @@ def _run(args: argparse.Namespace) -> int:
         retro_reserve_cents=caps["retro"],
         stage="work",
     )
-    run_id = "run-" + uuid.uuid4().hex[:12]
     started = datetime.now(UTC).replace(microsecond=0).isoformat()
     runs_dir = args.runs_dir or Path("runs")
     db_path = args.db or Path("runs/pipeline.db")
-    run_dir = runs_dir / run_id
+    resume_dir = getattr(args, "resume_dir", None)
+    if resume_dir:
+        run_dir = Path(resume_dir)
+        state = load_state(run_dir)
+        run_id = str(state["run_id"])
+        if _input_digest(args) != state.get("input_hash") and not getattr(args, "force", False):
+            print("resume: inputs changed since the checkpoint; pass --force", file=sys.stderr)
+            return 2
+        for ticket, record in list((state.get("tickets") or {}).items()):
+            if record.get("status") == "done" and not ticket_intact(record):
+                discard_ticket(record)
+                record["status"] = "redo"
+                state["tickets"][ticket] = record
+        save_state(run_dir, state)
+    else:
+        run_id = "run-" + uuid.uuid4().hex[:12]
+        run_dir = runs_dir / run_id
+        state = fresh_state(
+            run_id=run_id,
+            inputs=_input_digest(args),
+            fixtures=_fixture_map(args),
+            target_repo=str(args.target_repo or ""),
+            run_cap_cents=cap,
+        )
+        state["issue"] = args.issue
+        state["issue_snapshot"] = str(args.issue_snapshot or "")
+        state["config"] = str(args.config or "")
+        state["models"] = str(args.models or "")
+        state["budgets"] = str(args.budgets or "")
+        state["tiers"] = str(getattr(args, "tiers", "") or "")
+        state["no_push"] = bool(getattr(args, "no_push", False))
+    if getattr(args, "run_cap_cents", None):
+        cap = int(args.run_cap_cents)
+        work_cap = stage_run_cap(
+            run_cap_cents=cap,
+            retro_reserve_cents=caps["retro"],
+            stage="work",
+        )
+    elif resume_dir:
+        cap = int(state.get("run_cap_cents") or cap)
+        work_cap = stage_run_cap(
+            run_cap_cents=cap,
+            retro_reserve_cents=caps["retro"],
+            stage="work",
+        )
+    completed = set(state.get("completed_stages") or [])
+
+    def _note(stage: str) -> bool:
+        mark_stage(state, stage)
+        save_state(run_dir, state)
+        if getattr(args, "crash_after", None) == stage:
+            print(f"crash-after: {stage}")
+            print(f"run-id: {run_id}")
+            return True
+        return False
+
     triage_status = "dry-run"
     risk_tier = None
     mode = "dry-run"
@@ -267,7 +349,11 @@ def _run(args: argparse.Namespace) -> int:
     stop_reason = "dry-run" if args.dry_run or args.model_fixture is None else "success"
 
     def _finish(code: int, reason: str) -> int:
-        if args.model_fixture is not None and not args.dry_run:
+        if (
+            args.model_fixture is not None
+            and not args.dry_run
+            and "retro" not in state.get("completed_stages", [])
+        ):
             _run_retro(
                 args,
                 run_dir=run_dir,
@@ -278,6 +364,8 @@ def _run(args: argparse.Namespace) -> int:
                 cap=cap,
                 stop_reason=reason,
             )
+            mark_stage(state, "retro")
+            save_state(run_dir, state)
         print("claude-dev-pipeline scaffold")
         print(f"mode: {mode}")
         print("api-calls: none")
@@ -332,29 +420,39 @@ def _run(args: argparse.Namespace) -> int:
                     encoding="utf-8"
                 )
             )
-            try:
-                tiers = _tiers(args, pipeline)
-                result = execute_triage(
-                    snapshot=snapshot,
-                    fixture_path=args.model_fixture,
-                    run_dir=run_dir,
-                    run_id=run_id,
-                    spent_cents=0,
-                    run_cap_cents=work_cap,
-                    stage_cap_cents=caps["triage"],
-                    tiers=tiers,
-                    models=models,
-                    approve_xl=bool(getattr(args, "approve_xl", False)),
+            if "triage" in completed and (run_dir / "triage.json").is_file():
+                saved = json.loads((run_dir / "triage.json").read_text(encoding="utf-8"))
+                result = argparse.Namespace(
+                    status="succeeded",
+                    decision=saved.get("decision"),
+                    risk_tier=saved.get("risk_tier"),
+                    amount_cents=0,
                 )
-            except TierApprovalRequired as exc:
-                print(str(exc), file=sys.stderr)
-                return _finish(2, "tier-xl")
-            except BudgetHardStop as exc:
-                print(str(exc), file=sys.stderr)
-                return _finish(1, "budget-halt")
-            except TriageError as exc:
-                print(str(exc), file=sys.stderr)
-                return _finish(exc.code, "stop")
+                print("resume: skip triage")
+            else:
+                try:
+                    tiers = _tiers(args, pipeline)
+                    result = execute_triage(
+                        snapshot=snapshot,
+                        fixture_path=args.model_fixture,
+                        run_dir=run_dir,
+                        run_id=run_id,
+                        spent_cents=0,
+                        run_cap_cents=work_cap,
+                        stage_cap_cents=caps["triage"],
+                        tiers=tiers,
+                        models=models,
+                        approve_xl=bool(getattr(args, "approve_xl", False)),
+                    )
+                except TierApprovalRequired as exc:
+                    print(str(exc), file=sys.stderr)
+                    return _finish(2, "tier-xl")
+                except BudgetHardStop as exc:
+                    print(str(exc), file=sys.stderr)
+                    return _finish(1, "budget-halt")
+                except TriageError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return _finish(exc.code, "stop")
             triage_status = result.status
             risk_tier = result.risk_tier
             spent_cents = result.amount_cents
@@ -366,7 +464,7 @@ def _run(args: argparse.Namespace) -> int:
             routing = _saved_routing(run_dir)
             if routing:
                 budget = int(routing.get("budget_cents") or 0)
-                if budget > 0:
+                if budget > 0 and not getattr(args, "run_cap_cents", None):
                     work_cap = min(work_cap, budget)
                 models = apply_routing_models(models, routing)
                 print(f"tier: {routing.get('tier')} lane={routing.get('lane')}")
@@ -386,6 +484,10 @@ def _run(args: argparse.Namespace) -> int:
                         downgraded = True
                         print("budget: downgraded remaining stages; security block stays")
                     return None
+                state["halt_reason"] = decision.reason
+                state["needed_cents"] = decision.needed_cents
+                state["stopped_before"] = stage
+                state["pushed"] = False
                 write_halt(
                     run_dir,
                     run_id=run_id,
@@ -396,9 +498,14 @@ def _run(args: argparse.Namespace) -> int:
                 print(f"budget: halt before {stage} ({decision.reason})")
                 return "halt"
 
+            if _note("triage"):
+                return 3
             spec_status = None
             plan_status = None
-            if on_fast:
+            if "spec" in completed and (run_dir / "spec.json").is_file():
+                print("resume: skip spec")
+                spec_status = "succeeded"
+            elif on_fast:
                 issue = json.loads((run_dir / "issue.json").read_text(encoding="utf-8"))
                 write_synthesized(run_dir, issue)
                 print("fast-lane: skipped spec and plan")
@@ -421,38 +528,76 @@ def _run(args: argparse.Namespace) -> int:
                 if spec_status == "succeeded":
                     mode = "spec-fixture"
                     triage_status = "succeeded"
-                if _gate("plan", getattr(args, "plan_fixture", None)) == "halt":
-                    return _finish(1, "budget-halt")
-                plan_status = _run_plan(
-                    args,
-                    run_dir=run_dir,
-                    run_id=run_id,
-                    models=models,
-                    pipeline=pipeline,
-                    caps=caps,
-                    cap=work_cap,
-                )
+                    if _note("spec"):
+                        return 3
+            if not on_fast:
+                if "plan" in completed and (run_dir / "plan.json").is_file():
+                    print("resume: skip plan")
+                    plan_status = "succeeded"
+                else:
+                    if _gate("plan", getattr(args, "plan_fixture", None)) == "halt":
+                        return _finish(1, "budget-halt")
+                    plan_status = _run_plan(
+                        args,
+                        run_dir=run_dir,
+                        run_id=run_id,
+                        models=models,
+                        pipeline=pipeline,
+                        caps=caps,
+                        cap=work_cap,
+                    )
                 if plan_status == "failed":
                     return _finish(1, "stop")
                 if plan_status == "succeeded":
                     mode = "plan-fixture"
                     triage_status = "succeeded"
-            if _gate("implement", getattr(args, "implement_fixture", None)) == "halt":
-                return _finish(1, "budget-halt")
-            impl_status = _run_implement(
-                args,
-                run_dir=run_dir,
-                run_id=run_id,
-                models=models,
-                pipeline=pipeline,
-                caps=caps,
-                cap=work_cap,
+                    if "plan" not in completed and _note("plan"):
+                        return 3
+            tickets = state.get("tickets") or {}
+            implement_done = bool(tickets) and all(
+                record.get("status") == "done" and ticket_intact(record)
+                for record in tickets.values()
             )
+            if "implement" in completed and implement_done:
+                print("resume: skip implement")
+                impl_status = "succeeded"
+            else:
+                if _gate("implement", getattr(args, "implement_fixture", None)) == "halt":
+                    return _finish(1, "budget-halt")
+                skip = {
+                    ticket
+                    for ticket, record in (state.get("tickets") or {}).items()
+                    if record.get("status") == "done" and ticket_intact(record)
+                }
+
+                def _on_ticket(ticket: str, report: dict) -> None:
+                    record_ticket(state, ticket, report)
+                    save_state(run_dir, state)
+                    if getattr(args, "crash_after", None) == f"implement:{ticket}":
+                        raise CrashDrill(ticket)
+
+                try:
+                    impl_status = _run_implement(
+                        args,
+                        run_dir=run_dir,
+                        run_id=run_id,
+                        models=models,
+                        pipeline=pipeline,
+                        caps=caps,
+                        cap=work_cap,
+                        skip_tickets=skip,
+                        on_ticket=_on_ticket,
+                    )
+                except CrashDrill:
+                    print("crash-after: implement ticket")
+                    return 3
             if impl_status == "failed":
                 return _finish(1, "stop")
             if impl_status == "succeeded":
                 mode = "implement-fixture"
                 triage_status = "succeeded"
+                if _note("implement"):
+                    return 3
             if impl_status == "blocked":
                 mode = "implement-blocked"
                 triage_status = "blocked"
@@ -465,24 +610,30 @@ def _run(args: argparse.Namespace) -> int:
                         mark_escalated(run_dir, bigger, "diff")
                         on_fast = False
                         print(f"fast-lane: escalated to {bigger}")
-                if _gate("verify", getattr(args, "verify_fixture", None)) == "halt":
-                    return _finish(1, "budget-halt")
-                verify_limit = limits_for(pipeline)["max_verify_failures"] if on_fast else 1
-                failures = 0
-                verify_status = None
-                while failures < verify_limit:
-                    verify_status = _run_verify(
-                        args,
-                        run_dir=run_dir,
-                        run_id=run_id,
-                        pipeline=pipeline,
-                        caps=caps,
-                        cap=work_cap,
-                        effort=str((models.get("verify") or {}).get("effort") or "low"),
-                    )
-                    if verify_status != "failed":
-                        break
-                    failures += 1
+                if "verify" in completed and (run_dir / "verify.json").is_file():
+                    print("resume: skip verify")
+                    verify_status = "succeeded"
+                    failures = 0
+                    verify_limit = 1
+                else:
+                    if _gate("verify", getattr(args, "verify_fixture", None)) == "halt":
+                        return _finish(1, "budget-halt")
+                    verify_limit = limits_for(pipeline)["max_verify_failures"] if on_fast else 1
+                    failures = 0
+                    verify_status = None
+                    while failures < verify_limit:
+                        verify_status = _run_verify(
+                            args,
+                            run_dir=run_dir,
+                            run_id=run_id,
+                            pipeline=pipeline,
+                            caps=caps,
+                            cap=work_cap,
+                            effort=str((models.get("verify") or {}).get("effort") or "low"),
+                        )
+                        if verify_status != "failed":
+                            break
+                        failures += 1
                 if on_fast and failures >= verify_limit and verify_status == "failed":
                     mark_escalated(run_dir, "standard", "verify")
                     print("fast-lane: escalated after repeated verify failures")
@@ -494,30 +645,17 @@ def _run(args: argparse.Namespace) -> int:
                 elif verify_status == "succeeded":
                     mode = "verify-pass"
                     triage_status = "succeeded"
+                    if _note("verify"):
+                        return 3
                     if on_fast and not (run_dir / "fast.json").is_file():
                         write_fast_review(run_dir, pipeline)
-                    if _gate("review", getattr(args, "review_fixture", None)) == "halt":
-                        return _finish(1, "budget-halt")
-                    review_status = _run_review(
-                        args,
-                        run_dir=run_dir,
-                        run_id=run_id,
-                        models=models,
-                        pipeline=pipeline,
-                        caps=caps,
-                        cap=work_cap,
-                    )
-                    if review_status == "failed":
-                        mode = "review-blocked"
-                        triage_status = "failed"
-                        exit_code = 1
-                        stop_reason = "review-blocked"
-                    elif review_status == "succeeded":
-                        mode = "review-pass"
-                        triage_status = "succeeded"
-                        if _gate("pr", None) == "halt":
+                    if "review" in completed and (run_dir / "review.json").is_file():
+                        print("resume: skip review")
+                        review_status = "succeeded"
+                    else:
+                        if _gate("review", getattr(args, "review_fixture", None)) == "halt":
                             return _finish(1, "budget-halt")
-                        pr_status = _run_pr(
+                        review_status = _run_review(
                             args,
                             run_dir=run_dir,
                             run_id=run_id,
@@ -526,6 +664,31 @@ def _run(args: argparse.Namespace) -> int:
                             caps=caps,
                             cap=work_cap,
                         )
+                    if review_status == "failed":
+                        mode = "review-blocked"
+                        triage_status = "failed"
+                        exit_code = 1
+                        stop_reason = "review-blocked"
+                    elif review_status == "succeeded":
+                        mode = "review-pass"
+                        triage_status = "succeeded"
+                        if "review" not in completed and _note("review"):
+                            return 3
+                        if (run_dir / "pr.json").is_file():
+                            print("resume: pull request already recorded")
+                            pr_status = "rendered"
+                        else:
+                            if _gate("pr", None) == "halt":
+                                return _finish(1, "budget-halt")
+                            pr_status = _run_pr(
+                                args,
+                                run_dir=run_dir,
+                                run_id=run_id,
+                                models=models,
+                                pipeline=pipeline,
+                                caps=caps,
+                                cap=work_cap,
+                            )
                         if pr_status == "blocked":
                             mode = "pr-blocked"
                             triage_status = "blocked"
@@ -536,6 +699,84 @@ def _run(args: argparse.Namespace) -> int:
                         elif pr_status == "draft":
                             mode = "pr-draft"
     return _finish(exit_code, stop_reason)
+
+
+def _fixture_map(args: argparse.Namespace) -> dict:
+    names = {
+        "triage": "model_fixture",
+        "spec": "spec_fixture",
+        "plan": "plan_fixture",
+        "implement": "implement_fixture",
+        "verify": "verify_fixture",
+        "review": "review_fixture",
+        "retro": "retro_fixture",
+    }
+    mapped = {}
+    for stage, attr in names.items():
+        value = getattr(args, attr, None)
+        if value:
+            mapped[stage] = str(value)
+    return mapped
+
+
+def _input_digest(args: argparse.Namespace) -> str:
+    paths = []
+    for attr in ("issue_snapshot", "config", "models", "budgets", "tiers"):
+        value = getattr(args, attr, None)
+        if value:
+            paths.append(Path(value))
+    return input_hash(*paths)
+
+
+def _resume(args: argparse.Namespace) -> int:
+    runs = args.runs_dir or Path("runs")
+    run_dir = runs / args.run_id
+    try:
+        state = load_state(run_dir)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    fixtures = state.get("fixtures") or {}
+
+    def _as_path(value: str | None) -> Path | None:
+        return Path(value) if value else None
+
+    namespace = argparse.Namespace(
+        task=None,
+        spec=None,
+        issue=state.get("issue"),
+        issue_snapshot=_as_path(state.get("issue_snapshot")),
+        dry_run=False,
+        config=_as_path(state.get("config")),
+        models=_as_path(state.get("models")),
+        budgets=_as_path(state.get("budgets")),
+        tiers=_as_path(state.get("tiers")),
+        model_fixture=_as_path(fixtures.get("triage")),
+        spec_fixture=_as_path(fixtures.get("spec")),
+        plan_fixture=_as_path(fixtures.get("plan")),
+        implement_fixture=_as_path(fixtures.get("implement")),
+        verify_fixture=_as_path(fixtures.get("verify")),
+        review_fixture=_as_path(fixtures.get("review")),
+        retro_fixture=_as_path(fixtures.get("retro")),
+        summary_fixture=None,
+        target_repo=_as_path(state.get("target_repo")),
+        no_push=bool(state.get("no_push", True)),
+        approve_xl=True,
+        crash_after=None,
+        resume_dir=run_dir,
+        force=bool(args.force),
+        run_cap_cents=args.run_cap_cents,
+        runs_dir=runs,
+        db=args.db,
+    )
+    loaded = _load(namespace)
+    if isinstance(loaded, int):
+        return loaded
+    _models, pipeline, _caps, _cap = loaded
+    if not stage_enabled(pipeline, "resume"):
+        print("resume: disabled by stages.resume.enabled")
+        return 0
+    return _run(namespace)
 
 
 def _emit_summary(args, run_dir: Path, run_id: str, asked: str, reason: str, cap: int) -> str:
@@ -854,6 +1095,8 @@ def _run_implement(
     pipeline: dict,
     caps: dict[str, int],
     cap: int,
+    skip_tickets: set[str] | None = None,
+    on_ticket=None,
 ) -> str | None:
     if getattr(args, "implement_fixture", None) is None:
         return None
@@ -881,6 +1124,8 @@ def _run_implement(
             stage_cap_cents=caps["implement"],
             implement_cfg=cfg,
             effort=str(cfg.get("effort") or "high"),
+            skip_tickets=skip_tickets,
+            on_ticket=on_ticket,
         )
     except ImplementSkipped as exc:
         print(f"implement: skipped ({exc})")

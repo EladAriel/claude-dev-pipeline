@@ -15,7 +15,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Review | Offline fixtures and a fake codex: 2-of-3 cross-family vote, security block, round cap, missing codex | `stages.review.enabled: false` and `reviewers.codex.enabled: false`, then `git revert` the review commit |
 | PR | Offline temp repo and fake MCP: a blocking review opens nothing; merge is denied; an unapproved issue is untouched | `stages.pr.enabled: false`, then `git revert` the PR commit |
 | PR | Draft only; the only GitHub MCP tool is `create_pull_request` | Close the draft and disable the stage |
-| Retro | Items are proposals and are not applied | Disable retro and revert |
+| Retro | Offline metrics plus a fixture: proposals stay unapplied, and a budget halt still writes them | `stages.retro.enabled: false`, then `git revert` the retro commit |
 | Metrics | `run_metrics` matches the ledger for that run | Rebuild the index from the run artifacts |
 | Issue import | One draft per task, with a JSON block and `pipeline:queued` | Delete the local outbox; do not keep the issues |
 | MCP | The policy tests reject merge, Confluence writes, and stdio | Set `enabled: false` and remove the vault from the stage |

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from claude_dev_pipeline import __version__
-from claude_dev_pipeline.budget import BudgetHardStop, format_usd
+from claude_dev_pipeline.budget import BudgetHardStop, format_usd, stage_run_cap
 from claude_dev_pipeline.config import (
     effective_model,
     load_yaml,
@@ -18,7 +18,13 @@ from claude_dev_pipeline.config import (
     run_cap_cents,
     stage_enabled,
 )
-from claude_dev_pipeline.db import init_db, latest_run, rebuild_db, write_run_artifact
+from claude_dev_pipeline.db import (
+    aggregate_report,
+    init_db,
+    latest_run,
+    rebuild_db,
+    write_run_artifact,
+)
 from claude_dev_pipeline.intake import (
     IntakeError,
     intake_from_issue,
@@ -42,6 +48,7 @@ from claude_dev_pipeline.stages.implement import (
 )
 from claude_dev_pipeline.stages.plan import PlanError, PlanSkipped, execute_plan
 from claude_dev_pipeline.stages.pr import PrBlocked, PrError, PrSkipped, execute_pr
+from claude_dev_pipeline.stages.retro import RetroError, RetroSkipped, execute_retro
 from claude_dev_pipeline.stages.review import ReviewError, ReviewSkipped, execute_review
 from claude_dev_pipeline.stages.spec import SpecError, SpecSkipped, execute_spec
 from claude_dev_pipeline.stages.triage import TriageError, execute_triage
@@ -61,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
         return _import_plan(args)
     if args.command == "issue-status":
         return _issue_status(args)
+    if args.command == "report":
+        return _report(args)
     if args.command == "run":
         return _run(args)
     if args.dry_run:
@@ -125,7 +134,15 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="render pr.json and pr-body.md without pushing or calling MCP",
     )
+    run.add_argument(
+        "--retro-fixture",
+        type=Path,
+        help="recorded retro proposals; never applied and never a live API call",
+    )
     run.add_argument("--target-repo", type=Path)
+
+    report = sub.add_parser("report", help="aggregate inline metrics from the local index")
+    report.add_argument("--db", type=Path)
 
     status = sub.add_parser("status", help="print the latest local run")
     status.add_argument("--db", type=Path)
@@ -185,6 +202,11 @@ def _run(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return exc.code
     models, pipeline, caps, cap = loaded
+    work_cap = stage_run_cap(
+        run_cap_cents=cap,
+        retro_reserve_cents=caps["retro"],
+        stage="work",
+    )
     run_id = "run-" + uuid.uuid4().hex[:12]
     started = datetime.now(UTC).replace(microsecond=0).isoformat()
     runs_dir = args.runs_dir or Path("runs")
@@ -195,6 +217,53 @@ def _run(args: argparse.Namespace) -> int:
     mode = "dry-run"
     spent_cents = 0
     exit_code = 0
+    stop_reason = "dry-run" if args.dry_run or args.model_fixture is None else "success"
+
+    def _finish(code: int, reason: str) -> int:
+        if args.model_fixture is not None and not args.dry_run:
+            _run_retro(
+                args,
+                run_dir=run_dir,
+                run_id=run_id,
+                models=models,
+                pipeline=pipeline,
+                caps=caps,
+                cap=cap,
+                stop_reason=reason,
+            )
+        print("claude-dev-pipeline scaffold")
+        print(f"mode: {mode}")
+        print("api-calls: none")
+        print("merge: none")
+        print(f"run-id: {run_id}")
+        print(f"intake: {intake.kind}")
+        print(f"ref: {intake.ref}")
+        print("pr: none")
+        print(f"run-cap: {format_usd(cap)}")
+        print(f"stop-reason: {reason}")
+        if args.dry_run or args.model_fixture is None:
+            _print_stages(models, pipeline, caps)
+        payload = {
+            "run_id": run_id,
+            "repo": None,
+            "issue_ref": str(intake.issue_number) if intake.issue_number is not None else None,
+            "pipeline_version": __version__,
+            "started_at": started,
+            "ended_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+            "status": triage_status,
+            "risk_tier": risk_tier,
+            "review_depth": risk_tier,
+            "run_cap_usd": cap / 100,
+            "outcome": reason,
+            "verified_by": None,
+            "intake_kind": intake.kind,
+            "intake_ref": intake.ref,
+            "pr_url": None,
+        }
+        write_run_artifact(runs_dir, db_path, payload)
+        print(f"recorded: {db_path}")
+        return code
+
     if args.model_fixture is not None and not args.dry_run:
         if intake.kind != "issue":
             print(
@@ -218,18 +287,20 @@ def _run(args: argparse.Namespace) -> int:
                     run_dir=run_dir,
                     run_id=run_id,
                     spent_cents=0,
-                    run_cap_cents=cap,
+                    run_cap_cents=work_cap,
                     stage_cap_cents=caps["triage"],
                 )
             except BudgetHardStop as exc:
                 print(str(exc), file=sys.stderr)
-                return 1
+                return _finish(1, "budget-halt")
             except TriageError as exc:
                 print(str(exc), file=sys.stderr)
-                return exc.code
+                return _finish(exc.code, "stop")
             triage_status = result.status
             risk_tier = result.risk_tier
             spent_cents = result.amount_cents
+            if result.decision != "route":
+                stop_reason = "triage-rejected"
             print(f"triage: {result.decision}")
             print(f"risk-tier: {result.risk_tier}")
             print(f"triage-cost: {format_usd(result.amount_cents)}")
@@ -240,11 +311,11 @@ def _run(args: argparse.Namespace) -> int:
                 models=models,
                 pipeline=pipeline,
                 caps=caps,
-                cap=cap,
+                cap=work_cap,
                 spent_cents=spent_cents,
             )
             if spec_status == "failed":
-                return 1
+                return _finish(1, "stop")
             if spec_status == "succeeded":
                 mode = "spec-fixture"
                 triage_status = "succeeded"
@@ -255,10 +326,10 @@ def _run(args: argparse.Namespace) -> int:
                 models=models,
                 pipeline=pipeline,
                 caps=caps,
-                cap=cap,
+                cap=work_cap,
             )
             if plan_status == "failed":
-                return 1
+                return _finish(1, "stop")
             if plan_status == "succeeded":
                 mode = "plan-fixture"
                 triage_status = "succeeded"
@@ -269,16 +340,17 @@ def _run(args: argparse.Namespace) -> int:
                 models=models,
                 pipeline=pipeline,
                 caps=caps,
-                cap=cap,
+                cap=work_cap,
             )
             if impl_status == "failed":
-                return 1
+                return _finish(1, "stop")
             if impl_status == "succeeded":
                 mode = "implement-fixture"
                 triage_status = "succeeded"
             if impl_status == "blocked":
                 mode = "implement-blocked"
                 triage_status = "blocked"
+                stop_reason = "implement-blocked"
             if impl_status == "succeeded":
                 verify_status = _run_verify(
                     args,
@@ -286,13 +358,14 @@ def _run(args: argparse.Namespace) -> int:
                     run_id=run_id,
                     pipeline=pipeline,
                     caps=caps,
-                    cap=cap,
+                    cap=work_cap,
                     effort=str((models.get("verify") or {}).get("effort") or "low"),
                 )
                 if verify_status == "failed":
                     mode = "verify-failed"
                     triage_status = "failed"
                     exit_code = 1
+                    stop_reason = "verify-failed"
                 elif verify_status == "succeeded":
                     mode = "verify-pass"
                     triage_status = "succeeded"
@@ -303,12 +376,13 @@ def _run(args: argparse.Namespace) -> int:
                         models=models,
                         pipeline=pipeline,
                         caps=caps,
-                        cap=cap,
+                        cap=work_cap,
                     )
                     if review_status == "failed":
                         mode = "review-blocked"
                         triage_status = "failed"
                         exit_code = 1
+                        stop_reason = "review-blocked"
                     elif review_status == "succeeded":
                         mode = "review-pass"
                         triage_status = "succeeded"
@@ -319,47 +393,64 @@ def _run(args: argparse.Namespace) -> int:
                             models=models,
                             pipeline=pipeline,
                             caps=caps,
-                            cap=cap,
+                            cap=work_cap,
                         )
                         if pr_status == "blocked":
                             mode = "pr-blocked"
                             triage_status = "blocked"
                             exit_code = 1
+                            stop_reason = "pr-blocked"
                         elif pr_status == "rendered":
                             mode = "pr-rendered"
                         elif pr_status == "draft":
                             mode = "pr-draft"
-    print("claude-dev-pipeline scaffold")
-    print(f"mode: {mode}")
-    print("api-calls: none")
-    print("merge: none")
-    print(f"run-id: {run_id}")
-    print(f"intake: {intake.kind}")
-    print(f"ref: {intake.ref}")
-    print("pr: none")
-    print(f"run-cap: {format_usd(cap)}")
-    if args.dry_run or args.model_fixture is None:
-        _print_stages(models, pipeline, caps)
-    payload = {
-        "run_id": run_id,
-        "repo": None,
-        "issue_ref": str(intake.issue_number) if intake.issue_number is not None else None,
-        "pipeline_version": __version__,
-        "started_at": started,
-        "ended_at": started,
-        "status": triage_status,
-        "risk_tier": risk_tier,
-        "review_depth": risk_tier,
-        "run_cap_usd": cap / 100,
-        "outcome": None,
-        "verified_by": None,
-        "intake_kind": intake.kind,
-        "intake_ref": intake.ref,
-        "pr_url": None,
-    }
-    write_run_artifact(runs_dir, db_path, payload)
-    print(f"recorded: {db_path}")
-    return exit_code
+    return _finish(exit_code, stop_reason)
+
+
+def _run_retro(
+    args: argparse.Namespace,
+    *,
+    run_dir: Path,
+    run_id: str,
+    models: dict,
+    pipeline: dict,
+    caps: dict[str, int],
+    cap: int,
+    stop_reason: str,
+) -> None:
+    if not stage_enabled(pipeline, "retro"):
+        print("retro: disabled by stages.retro.enabled")
+        return
+    model = str((models.get("retro") or {}).get("model") or "claude-haiku-5.5")
+    effort = str((models.get("retro") or {}).get("effort") or "low")
+    try:
+        result = execute_retro(
+            run_dir=run_dir,
+            run_id=run_id,
+            caps=caps,
+            spent_cents=_spent_cents(run_dir),
+            run_cap_cents=cap,
+            stage_cap_cents=caps["retro"],
+            stop_reason=stop_reason,
+            fixture_path=getattr(args, "retro_fixture", None),
+            model=model,
+            effort=effort,
+        )
+    except RetroSkipped as exc:
+        print(f"retro: skipped ({exc})")
+        return
+    except (BudgetHardStop, RetroError) as exc:
+        print(str(exc), file=sys.stderr)
+        return
+    print(f"retro: {result.status}")
+    print(f"retro-proposals: {result.proposals}")
+    print("retro-applied: false")
+
+
+def _report(args: argparse.Namespace) -> int:
+    payload = aggregate_report(args.db or Path("runs/pipeline.db"))
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
 
 
 def _run_spec(
@@ -846,6 +937,7 @@ def _dry_run(args: argparse.Namespace) -> int:
         "finders bug-hunt, simplify, end-to-end; codex read-only; max 3 rounds"
     )
     print("pr: draft only; create_pull_request; no merge; --no-push renders locally")
+    print("retro: metrics first; proposals are not applied; reserved inside the run cap")
     return 0
 
 

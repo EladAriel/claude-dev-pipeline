@@ -111,6 +111,9 @@ def _index_run(conn: sqlite3.Connection, run_dir: Path, run: dict) -> None:
     metrics_path = run_dir / "metrics.json"
     if metrics_path.exists():
         _index_metrics(conn, run_id, json.loads(metrics_path.read_text(encoding="utf-8")))
+    retro_path = run_dir / "retro.json"
+    if retro_path.exists():
+        _index_retro(conn, run_id, json.loads(retro_path.read_text(encoding="utf-8")))
 
 
 def _index_ledger_line(conn: sqlite3.Connection, row: dict) -> None:
@@ -151,6 +154,36 @@ def _index_ledger_line(conn: sqlite3.Connection, row: dict) -> None:
             0,
         ),
     )
+
+
+def aggregate_report(db_path: Path) -> dict:
+    """Cost trend and the share of implement rows that used the cheapest model."""
+    if not db_path.exists():
+        return {"cost_trend": [], "cheapest_capable_model_hit_rate": None, "runs": 0}
+    conn = connect(db_path)
+    try:
+        trend = [
+            {"run_id": row["run_id"], "cost_usd": row["cost_usd"], "started_at": row["started_at"]}
+            for row in conn.execute(
+                """
+                SELECT runs.run_id, run_metrics.cost_usd, runs.started_at
+                FROM run_metrics JOIN runs ON runs.run_id = run_metrics.run_id
+                ORDER BY runs.started_at, runs.run_id
+                """
+            )
+        ]
+        rows = conn.execute(
+            "SELECT model FROM stages WHERE name = 'implement' AND model != ''"
+        ).fetchall()
+    finally:
+        conn.close()
+    hits = sum(1 for row in rows if str(row["model"]) == "claude-haiku-5.5")
+    rate = (hits / len(rows)) if rows else None
+    return {
+        "cheapest_capable_model_hit_rate": rate,
+        "cost_trend": trend,
+        "runs": len(trend),
+    }
 
 
 def latest_run(db_path: Path) -> dict | None:
@@ -203,3 +236,26 @@ def _index_metrics(conn: sqlite3.Connection, run_id: str, metrics: dict) -> None
             metrics.get("recorded_at"),
         ),
     )
+
+
+def _index_retro(conn: sqlite3.Connection, run_id: str, retro: dict) -> None:
+    for item in retro.get("items") or []:
+        conn.execute(
+            """
+            INSERT INTO retro_items (
+              item_id, run_id, category, severity, evidence, proposed_change,
+              target, expected_metric, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"{run_id}:{item.get('id')}",
+                run_id,
+                item.get("category"),
+                item.get("severity"),
+                item.get("evidence"),
+                item.get("proposed_change"),
+                item.get("target"),
+                item.get("expected_metric"),
+                item.get("status") or "proposed",
+            ),
+        )

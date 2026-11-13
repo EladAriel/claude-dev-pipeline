@@ -10,7 +10,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Spec | Offline fixtures: `spec.json` has acceptance ids, seams, and e2e scenarios; a rejected triage writes none | `stages.spec.enabled: false`, then `git revert` the spec commit |
 | Plan | Offline fixtures: `plan.json` is an ordered DAG and covers every spec acceptance id; a spec that needs a human writes none | `stages.plan.enabled: false`, then `git revert` the plan commit |
 | Implement | Offline fixtures in a temp git repo: one local commit per done ticket; a blocked ticket stops the run; the diff is scanned | `stages.implement.enabled: false`, then `git revert` the implement commit |
-| Verify | Evidence quotes real command output; end-to-end scenarios are recorded | Disable the check and revert |
+| Verify | Offline fake commands: all-green writes `verify.json` without a model fixture; a failure stops the run | `stages.verify.enabled: false`, then `git revert` the verify commit |
 | Simplify | Checks stay green, or the simplify commit is dropped | Drop that commit |
 | Review | Votes, the round cap, and the security block hold in local tests | Disable a finder or the Codex adapter |
 | PR | Draft only; the only GitHub MCP tool is `create_pull_request` | Close the draft and disable the stage |

@@ -1,9 +1,26 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "verify",
   "type": "object",
   "additionalProperties": true,
-  "title": "verify-report",
-  "required": [
-    "commands"
-  ]
+  "required": ["status", "model_called", "tickets"],
+  "properties": {
+    "status": {"enum": ["pass", "fail"]},
+    "model_called": {"type": "boolean"},
+    "coverage_gaps": {"type": "array", "items": {"type": "string"}},
+    "tickets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ticket", "passed", "commands", "failure_summary", "suggested_fix_ticket"],
+        "properties": {
+          "ticket": {"type": "string"},
+          "passed": {"type": "boolean"},
+          "commands": {"type": "array"},
+          "failure_summary": {"type": "string"},
+          "suggested_fix_ticket": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
 }

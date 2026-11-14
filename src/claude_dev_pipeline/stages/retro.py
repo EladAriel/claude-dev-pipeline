@@ -139,6 +139,7 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
         "review_survivors_by_family": survivors,
         "deps_lane": _read(run_dir / "deps.json").get("lane") == "deps",
         "migration": _read(run_dir / "migrations.json").get("lane") == "migration",
+        "repos": len(_read(run_dir / "multirepo.json").get("repos") or []),
         "agreement_rate": agreement_rate(run_dir),
         "reverted": (run_dir / "revert.json").is_file(),
         "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat(),

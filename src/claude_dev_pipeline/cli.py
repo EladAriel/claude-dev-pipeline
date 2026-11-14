@@ -82,6 +82,8 @@ from claude_dev_pipeline.lanes import (
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 from claude_dev_pipeline.migrations import note as note_migrations
 from claude_dev_pipeline.monorepo import note as note_monorepo
+from claude_dev_pipeline.multirepo import coordinate as coordinate_repos
+from claude_dev_pipeline.multirepo import enabled as multirepo_enabled
 from claude_dev_pipeline.nocode import apply_answer
 from claude_dev_pipeline.nocode import classify as classify_nocode
 from claude_dev_pipeline.nocode import enabled as nocode_enabled
@@ -660,6 +662,9 @@ def _run(args: argparse.Namespace) -> int:
                     triage_status = "succeeded"
                     if "plan" not in completed and _note("plan"):
                         return 3
+            if multirepo_enabled(pipeline) and (run_dir / "plan.json").is_file():
+                plan = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
+                coordinate_repos(run_dir, run_id, plan, pipeline, work_cap)
             tickets = state.get("tickets") or {}
             implement_done = bool(tickets) and all(
                 record.get("status") == "done" and ticket_intact(record)

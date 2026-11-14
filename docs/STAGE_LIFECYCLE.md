@@ -10,6 +10,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Tiers | Offline fixtures: S/M/L/XL set the lane, review depth, and budget; XL stops without `--approve-xl` | `stages.tiers.enabled: false`, then `git revert` the tiers commit |
 | Fast lane | Tier S skips spec and plan; a large diff or a second verify failure escalates | `stages.fast.enabled: false`, then `git revert` the fast-lane commit |
 | Docs lane | Docs and non-executable config skip spec, plan, and test bootstrap | `stages.docs_lane.enabled: false`, then `git revert` the docs-lane commit |
+| Monorepo | The run is scoped to affected workspaces and a file/token cap | `stages.monorepo.enabled: false`, then `git revert` the monorepo commit |
 | Debug | Offline fixture: diagnosis stays in a scratch worktree and does not push | `stages.debug.enabled: false`, then `git revert` the debug commit |
 | Summary | The template is printed last; an unapproved issue gets no status comment | `stages.summary.enabled: false`, then `git revert` the summary commit |
 | Budget policy | A projected overrun stops before the next stage writes; security blocking stays | `stages.budget_policy.enabled: false`, then `git revert` the budget-policy commit |

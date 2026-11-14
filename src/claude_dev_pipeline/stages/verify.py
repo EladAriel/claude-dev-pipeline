@@ -14,6 +14,7 @@ from claude_dev_pipeline.docs_lane import light_names
 from claude_dev_pipeline.flaky import settle_flakes
 from claude_dev_pipeline.harness import discover
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
+from claude_dev_pipeline.monorepo import affected_suffix
 
 PROVIDER = "anthropic"
 MODEL = "claude-haiku-5.5"
@@ -54,7 +55,7 @@ def execute_verify(
         raise VerifyError("no done ticket to verify")
     timeout = float(config.get("checks_timeout_seconds") or 30)
     docs = docs_active(run_dir)
-    tickets = [_verify_ticket(item, config, timeout, docs=docs) for item in done]
+    tickets = [_verify_ticket(item, config, timeout, docs=docs, run_dir=run_dir) for item in done]
     tickets, flake_info = settle_flakes(tickets, config, run_dir, run_id, _run_command)
     coverage_gaps = [] if docs else _coverage_gaps(spec, plan, tickets)
     commands_failed = [item for item in tickets if not item["passed"]]
@@ -147,13 +148,15 @@ def execute_verify(
     return VerifyResult(status="fail", model_called=True, amount_cents=amount_cents)
 
 
-def _verify_ticket(report: dict, config: dict, timeout: float, docs: bool = False) -> dict:
+def _verify_ticket(
+    report: dict, config: dict, timeout: float, docs: bool = False, run_dir: Path | None = None
+) -> dict:
     worktree = Path(str(report.get("worktree") or ""))
     if not worktree.is_dir():
         raise VerifyError(f"worktree missing for ticket {report.get('ticket')}")
     commands = []
     passed = True
-    for name, command in _commands(config, worktree, docs=docs):
+    for name, command in _commands(config, worktree, docs=docs, run_dir=run_dir):
         outcome = _run_command(command, worktree, timeout)
         commands.append({"name": name, "command": command, **outcome})
         if outcome["exit_code"] != 0 or outcome["timed_out"]:
@@ -170,7 +173,12 @@ def _verify_ticket(report: dict, config: dict, timeout: float, docs: bool = Fals
     }
 
 
-def _commands(config: dict, worktree: Path, docs: bool = False) -> list[tuple[str, str]]:
+def _commands(
+    config: dict,
+    worktree: Path,
+    docs: bool = False,
+    run_dir: Path | None = None,
+) -> list[tuple[str, str]]:
     checks = config.get("checks") or {}
     names = ("lint", "format", "link", "schema") if docs else CHECK_NAMES
     allowed = light_names(docs)
@@ -183,6 +191,11 @@ def _commands(config: dict, worktree: Path, docs: bool = False) -> list[tuple[st
         detected = discover(worktree, {"checks": {}})
         if detected.get("command"):
             found.append(("test", str(detected["command"])))
+    suffix = affected_suffix(run_dir)
+    if suffix:
+        found = [
+            (name, f"{command} {suffix}" if name == "test" else command) for name, command in found
+        ]
     return found
 
 

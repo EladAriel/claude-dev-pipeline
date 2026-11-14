@@ -50,6 +50,11 @@ stages:
   docs_lane:
     enabled: true
     budget_cents: 200
+  monorepo:
+    enabled: true
+    max_files: 40
+    max_tokens: 8000
+    full_suite_tiers: [L, XL]
   debug:
     enabled: true
   summary:

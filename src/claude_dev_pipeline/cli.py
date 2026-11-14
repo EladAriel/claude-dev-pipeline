@@ -81,6 +81,7 @@ from claude_dev_pipeline.lanes import (
 )
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 from claude_dev_pipeline.migrations import note as note_migrations
+from claude_dev_pipeline.monorepo import note as note_monorepo
 from claude_dev_pipeline.overrun import (
     downgrade_models,
     load_policy,
@@ -642,6 +643,21 @@ def _run(args: argparse.Namespace) -> int:
             else:
                 if _gate("implement", getattr(args, "implement_fixture", None)) == "halt":
                     return _finish(1, "budget-halt")
+                if args.target_repo is not None:
+                    tier_name = "M"
+                    triage_path = run_dir / "triage.json"
+                    if triage_path.is_file():
+                        triage = json.loads(triage_path.read_text(encoding="utf-8"))
+                        raw = triage.get("routing")
+                        routing = raw if isinstance(raw, dict) else {}
+                        tier_name = str(routing.get("tier") or tier_name)
+                    note_monorepo(
+                        run_dir,
+                        args.target_repo,
+                        _planned_files(run_dir),
+                        tier_name,
+                        pipeline,
+                    )
                 harness_ticket = None
                 if (
                     stage_enabled(pipeline, "verification")
@@ -1085,6 +1101,19 @@ def _emit_summary(args, run_dir: Path, run_id: str, asked: str, reason: str, cap
         run_id=run_id,
         run_cap_cents=cap,
     )
+
+
+def _planned_files(run_dir: Path) -> list[str]:
+    path = run_dir / "plan.json"
+    if not path.is_file():
+        return []
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    files: list[str] = []
+    for task in plan.get("tasks") or []:
+        for item in task.get("files") or []:
+            if isinstance(item, str):
+                files.append(item)
+    return files
 
 
 def _fast_plan(run_dir: Path) -> dict:

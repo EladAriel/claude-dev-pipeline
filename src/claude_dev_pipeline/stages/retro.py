@@ -135,6 +135,7 @@ def compute_metrics(run_dir: Path, caps: dict[str, int], stop_reason: str) -> di
         "clarity_score": clarity.get("score"),
         "clarity_halted": bool(clarity.get("halted")),
         "duplicate_halted": bool(_read(run_dir / "duplicate.json").get("halted")),
+        "no_code": _read(run_dir / "nocode.json").get("lane") == "no-code",
         "review_survivors_by_family": survivors,
         "deps_lane": _read(run_dir / "deps.json").get("lane") == "deps",
         "migration": _read(run_dir / "migrations.json").get("lane") == "migration",

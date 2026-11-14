@@ -82,6 +82,9 @@ from claude_dev_pipeline.lanes import (
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
 from claude_dev_pipeline.migrations import note as note_migrations
 from claude_dev_pipeline.monorepo import note as note_monorepo
+from claude_dev_pipeline.nocode import apply_answer
+from claude_dev_pipeline.nocode import classify as classify_nocode
+from claude_dev_pipeline.nocode import enabled as nocode_enabled
 from claude_dev_pipeline.overrun import (
     downgrade_models,
     load_policy,
@@ -243,6 +246,12 @@ def _parser() -> argparse.ArgumentParser:
         "--approve-xl",
         action="store_true",
         help="allow a tier XL run; without this flag XL stops before any later stage",
+    )
+    run.add_argument("--answer-fixture", type=Path)
+    run.add_argument(
+        "--approve-nocode",
+        action="store_true",
+        help="continue into the normal lane when a no-code answer needs code",
     )
 
     debug = sub.add_parser("debug", help="read-only diagnosis in a scratch worktree")
@@ -575,6 +584,11 @@ def _run(args: argparse.Namespace) -> int:
                 return _finish(2, "needs-info")
             if _duplicate_stop(args, pipeline, snapshot, run_dir, run_id, work_cap):
                 return _finish(2, "duplicate")
+            nocode = _nocode_stop(args, pipeline, snapshot, run_dir, result.decision)
+            if nocode == "done":
+                return _finish(0, "no-code")
+            if nocode == "approval":
+                return _finish(2, "no-code-approval")
             spec_status = None
             plan_status = None
             if "spec" in completed and (run_dir / "spec.json").is_file():
@@ -897,6 +911,32 @@ def _config_digest(args: argparse.Namespace) -> str:
         if value:
             paths.append(Path(value))
     return input_hash(*paths)
+
+
+def _nocode_stop(args, pipeline, snapshot, run_dir: Path, decision: str) -> str:
+    if snapshot is None or decision != "route" or not nocode_enabled(pipeline):
+        return ""
+    if classify_nocode(snapshot, pipeline) is None:
+        return ""
+    fixture = None
+    fixture_path = getattr(args, "answer_fixture", None)
+    if fixture_path is not None and Path(fixture_path).is_file():
+        fixture = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
+    report = apply_answer(
+        run_dir,
+        snapshot,
+        pipeline,
+        fixture,
+        approved=bool(getattr(args, "approve_nocode", False)),
+    )
+    if report.get("needs_code") and not report.get("approved"):
+        print("nocode: approval required")
+        return "approval"
+    if report.get("needs_code"):
+        print("nocode: escalated")
+        return ""
+    print("nocode: answer")
+    return "done"
 
 
 def _duplicate_stop(args, pipeline, snapshot, run_dir: Path, run_id: str, cap: int) -> bool:

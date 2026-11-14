@@ -93,6 +93,8 @@ from claude_dev_pipeline.overrun import (
     write_halt,
 )
 from claude_dev_pipeline.plan import STAGES, Stage, require_gates
+from claude_dev_pipeline.revert_run import enabled as revert_enabled
+from claude_dev_pipeline.revert_run import perform as perform_revert
 from claude_dev_pipeline.scan import load_allowlist, scan_tree
 from claude_dev_pipeline.stages.debug import DebugError, DebugSkipped, execute_debug
 from claude_dev_pipeline.stages.implement import (
@@ -135,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
         return _debug(args)
     if args.command == "resume":
         return _resume(args)
+    if args.command == "revert":
+        return _revert_command(args)
     if args.command == "run":
         return _run(args)
     if args.dry_run:
@@ -209,6 +213,16 @@ def _parser() -> argparse.ArgumentParser:
         "--crash-after",
         help="stop after a stage or implement:TICKET and leave the checkpoint",
     )
+
+    revert = sub.add_parser("revert", help="open a revert pull request for a commit")
+    revert.add_argument("target", help="run id or commit sha")
+    revert.add_argument("--target-repo", type=Path, required=True)
+    revert.add_argument("--runs-dir", type=Path)
+    revert.add_argument("--sha", default="")
+    revert.add_argument("--reason", default="Reverted by the operator.")
+    revert.add_argument("--original", default="")
+    revert.add_argument("--verify-command", default="")
+    revert.add_argument("--config", type=Path)
 
     resumed = sub.add_parser("resume", help="continue a run from its last checkpoint")
     resumed.add_argument("run_id")
@@ -1057,6 +1071,41 @@ def _input_digest(args: argparse.Namespace) -> str:
         if value:
             paths.append(Path(value))
     return input_hash(*paths)
+
+
+def _is_sha(value: str) -> bool:
+    return 7 <= len(value) <= 40 and all(char in "0123456789abcdef" for char in value)
+
+
+def _revert_command(args: argparse.Namespace) -> int:
+    config = {}
+    if getattr(args, "config", None) and Path(args.config).is_file():
+        config = load_yaml(Path(args.config))
+    if not revert_enabled(config):
+        print("revert: disabled")
+        return 0
+    target = str(args.target)
+    sha = str(args.sha or "")
+    if not sha and _is_sha(target):
+        sha = target
+    run_id = target if not sha or target != sha else target[:12]
+    if not sha:
+        print("revert: missing commit", file=sys.stderr)
+        return 2
+    runs = args.runs_dir or Path("runs")
+    report = perform_revert(
+        args.target_repo,
+        sha,
+        run_id,
+        str(args.reason),
+        runs,
+        verify_command=str(args.verify_command or ""),
+        original=str(args.original or ""),
+    )
+    print(f"revert: {report.get('status')}")
+    if report.get("files"):
+        print("revert-files: " + ", ".join(report["files"]))
+    return 0 if report.get("status") == "ready" else 1
 
 
 def _resume(args: argparse.Namespace) -> int:

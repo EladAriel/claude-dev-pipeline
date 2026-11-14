@@ -41,6 +41,8 @@ fast:
 stages:
   triage:
     enabled: true
+  nocode:
+    enabled: true
   tiers:
     enabled: true
   budget_policy:

@@ -7,6 +7,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | --- | --- | --- |
 | Scaffold (this change) | `ruff`, `pytest`, gitleaks, `pipeline scan-paths`, `pipeline --dry-run` | Revert the pull request |
 | Triage | Offline fixtures: unapproved issues make no model call; `triage.json` matches the schema | `stages.triage.enabled: false`, then `git revert` the triage commit |
+| No-code | A question or research request writes answer.md and opens no pull request | `stages.nocode.enabled: false`, then `git revert` the no-code commit |
 | Tiers | Offline fixtures: S/M/L/XL set the lane, review depth, and budget; XL stops without `--approve-xl` | `stages.tiers.enabled: false`, then `git revert` the tiers commit |
 | Fast lane | Tier S skips spec and plan; a large diff or a second verify failure escalates | `stages.fast.enabled: false`, then `git revert` the fast-lane commit |
 | Docs lane | Docs and non-executable config skip spec, plan, and test bootstrap | `stages.docs_lane.enabled: false`, then `git revert` the docs-lane commit |

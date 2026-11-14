@@ -13,6 +13,7 @@ from claude_dev_pipeline.duplicates import summary_lines as duplicate_lines
 from claude_dev_pipeline.flaky import risk_line
 from claude_dev_pipeline.github_gate import admit_issue
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
+from claude_dev_pipeline.migrations import summary_line as migration_line
 
 
 def write_summary(
@@ -120,6 +121,9 @@ def _tier_line(routing: dict, metrics: dict) -> str:
 
 
 def _risks(run_dir: Path, metrics: dict) -> str:
+    migration = migration_line(run_dir)
+    if migration:
+        return migration
     verify = _read(run_dir / "verify.json")
     if verify.get("status") == "unverified":
         return (

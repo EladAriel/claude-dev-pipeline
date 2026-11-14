@@ -13,6 +13,7 @@ from claude_dev_pipeline.flaky import body_lines
 from claude_dev_pipeline.github_gate import admit_issue
 from claude_dev_pipeline.issues import plan_status_write
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
+from claude_dev_pipeline.migrations import checklist as migration_checklist
 from claude_dev_pipeline.reconcile import dispute_lines
 
 ALLOWED_PR_TOOL = "create_pull_request"
@@ -137,6 +138,7 @@ def render_pr(run_dir: Path, *, issue_number: int | None, usage_cents: int) -> t
         lines.append(summary)
     lines.extend(dispute_lines(review))
     lines.extend(pr_lines(run_dir))
+    lines.extend(migration_checklist(run_dir))
     lines.append("")
     lines.append(f"Cost so far: ${ledger_cost / 100:.2f}")
     return title, "\n".join(lines) + "\n", ledger_cost

@@ -80,6 +80,7 @@ from claude_dev_pipeline.lanes import (
     write_synthesized,
 )
 from claude_dev_pipeline.mcp_policy import validate_mcp_config
+from claude_dev_pipeline.migrations import note as note_migrations
 from claude_dev_pipeline.overrun import (
     downgrade_models,
     load_policy,
@@ -725,6 +726,21 @@ def _run(args: argparse.Namespace) -> int:
                     if deps_final.get("advisory"):
                         print("deps: advisory")
                         return _finish(1, "deps-advisory")
+                if args.target_repo is not None:
+                    issue_text = ""
+                    issue_path = run_dir / "issue.json"
+                    if issue_path.is_file():
+                        issue = json.loads(issue_path.read_text(encoding="utf-8"))
+                        issue_text = f"{issue.get('title') or ''}\n{issue.get('body') or ''}"
+                    migration = note_migrations(
+                        run_dir,
+                        args.target_repo,
+                        diff_stats(run_dir)[0],
+                        issue_text,
+                        pipeline,
+                    )
+                    if migration.get("lane") == "migration":
+                        print(f"migration: {migration.get('tool')} tier=L")
                 if "verify" in completed and (run_dir / "verify.json").is_file():
                     print("resume: skip verify")
                     verify_status = "succeeded"
@@ -1482,6 +1498,11 @@ def _run_review(
     if deps_path.is_file():
         deps = json.loads(deps_path.read_text(encoding="utf-8"))
         if isinstance(deps, dict) and deps.get("major"):
+            tier = "Deep"
+            codex_on = True
+    if (run_dir / "migrations.json").is_file():
+        migration = json.loads((run_dir / "migrations.json").read_text(encoding="utf-8"))
+        if isinstance(migration, dict) and migration.get("lane") == "migration":
             tier = "Deep"
             codex_on = True
     try:

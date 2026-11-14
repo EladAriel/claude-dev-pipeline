@@ -74,6 +74,8 @@ stages:
     enabled: true
   deps:
     enabled: true
+  migrations:
+    enabled: true
   verify:
     enabled: true
   flaky:

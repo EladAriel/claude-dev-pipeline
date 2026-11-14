@@ -19,6 +19,7 @@ checks outputs. It does not script the agent's steps, and it does not merge.
 | Duplicates | Overlap with an open issue or an existing pipeline run stops before spec | `stages.duplicates.enabled: false`, then `git revert` the duplicates commit |
 | Spec | Offline fixtures: `spec.json` has acceptance ids, seams, and e2e scenarios; a rejected triage writes none | `stages.spec.enabled: false`, then `git revert` the spec commit |
 | Plan | Offline fixtures: `plan.json` is an ordered DAG and covers every spec acceptance id; a spec that needs a human writes none | `stages.plan.enabled: false`, then `git revert` the plan commit |
+| Multi-repo | Cross-repo tickets become one local PR per configured repo | `stages.multirepo.enabled: false`, then `git revert` the multi-repo commit |
 | Implement | Offline fixtures in a temp git repo: one local commit per done ticket; a blocked ticket stops the run; the diff is scanned | `stages.implement.enabled: false`, then `git revert` the implement commit |
 | Deps lane | A one-ecosystem manifest bump skips the fast lane; a major bump raises review | `stages.deps.enabled: false`, then `git revert` the deps-lane commit |
 | Migrations | A schema change is tier L, needs a rollback, and blocks on destructive SQL | `stages.migrations.enabled: false`, then `git revert` the migrations commit |

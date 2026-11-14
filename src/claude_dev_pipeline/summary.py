@@ -15,6 +15,7 @@ from claude_dev_pipeline.github_gate import admit_issue
 from claude_dev_pipeline.ledger import Ledger, LedgerEntry
 from claude_dev_pipeline.migrations import summary_line as migration_line
 from claude_dev_pipeline.monorepo import summary_lines as monorepo_lines
+from claude_dev_pipeline.multirepo import summary_lines as multirepo_lines
 from claude_dev_pipeline.nocode import summary_lines as nocode_lines
 
 
@@ -75,6 +76,7 @@ def write_summary(
     lines.extend(duplicate_lines(run_dir))
     lines.extend(nocode_lines(run_dir))
     lines.extend(conflict_lines(run_dir))
+    lines.extend(multirepo_lines(run_dir))
     lines.extend(docs_lines(run_dir))
     lines.extend(deps_lines(run_dir))
     lines.extend(monorepo_lines(run_dir))
